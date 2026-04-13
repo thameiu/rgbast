@@ -7,11 +7,13 @@ from fastapi import Depends
 
 load_dotenv()
 
-databaseUrl = os.getenv("DATABASE_URL","dummy.postgrossomodo")
+databaseUrl = os.getenv("DATABASE_URL", "dummy.postgrossomodo")
 engine = create_engine(databaseUrl)
+
 
 def get_session():
     with Session(engine) as session:
         yield session
+
 
 SessionDep = Annotated[Session, Depends(get_session)]

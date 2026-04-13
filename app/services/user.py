@@ -1,11 +1,17 @@
-from fastapi import FastAPI
 from app.models.user import User
 from app.schemas.user import UserCreate
 from app.core.database import SessionDep
+from pwdlib import PasswordHash
 
-def create_user(userSchema: UserCreate, session: SessionDep) :
-    newUser = User(**userSchema.model_dump())
-    session.add(newUser)
-    session.commit()
-    session.refresh(newUser)
-    return newUser
+
+class UserService:
+    def create_user(userSchema: UserCreate, session: SessionDep):
+        newUser = User(**userSchema.model_dump())
+
+        hasher = PasswordHash.recommended()
+        newUser.password = hasher.hash(newUser.password)
+
+        session.add(newUser)
+        session.commit()
+        session.refresh(newUser)
+        return newUser
