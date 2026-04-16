@@ -12,7 +12,7 @@ class AuthController:
         try:
             loginResponse = AuthService.login(loginSchema, session)
             if loginResponse is None:
-                raise NoResultFound     
+                raise NoResultFound
             return loginResponse
 
         except ValidationError as e:
