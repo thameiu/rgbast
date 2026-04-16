@@ -38,9 +38,18 @@ class Palette_Snapshot(SQLModel, table=True):
 
 
 # Color in a palette, linked to a snapshot (not the main palette).
-# Positions are calculated in thousands (1000 - 2000 - 3000...) in order to make insertions easier,
-# by making the inserted color's position the median between the previous and next colors (1000 - 2000 -> 1500).
-# But eventually, they might be recalculated if the median becomes too complex (1007.8125 for example).
+# Positions are managed using lexicographic ranking (string-based ordering),
+# instead of numeric fractional indexing.
+# Each color has a 'position_key' (e.g. "a", "am", "b") which determines its order
+# when sorted lexicographically (ORDER BY position_key).
+# 
+# This allows inserting new colors between any two existing ones by generating
+# a new key that falls between their keys (e.g. between "a" and "b" → "am"),
+# without needing to generate more changes or rebalance positions.
+# Despite this, A balance may be necessary when approaching a extreme case, like 100 characters.
+# 
+# This approach avoids precision issues from numeric division and makes insertions
+# stable and scalable, even with many consecutive inserts between the same elements.
 class Palette_Color(SQLModel, table=True):
     id: int = Field(primary_key=True, nullable=False)
     palette_snapshot_id: int = Field(
@@ -50,7 +59,7 @@ class Palette_Color(SQLModel, table=True):
     # Only stores what comes after the "#".
     hex: str = Field(default=None, max_length=6, nullable=False)
     label: str | None = Field(default=None, nullable=True)
-    position: Decimal = Field(default=None, sa_type=Numeric(10, 4), nullable=False)
+    position_key: str = Field(index=True, nullable=False)
 
 
 # Change between two palette snapshots.
