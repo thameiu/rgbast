@@ -1,9 +1,19 @@
 from fastapi import FastAPI
 from fastapi.security import HTTPBearer
+from fastapi.middleware.cors import CORSMiddleware
 from app.api import palettes, users, auth
 from app.scripts.init_db import create_db_and_tables
 
 app = FastAPI(title="RGBAST API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins (TODO change in prod)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
 create_db_and_tables()
 
 bearer_scheme = HTTPBearer()
