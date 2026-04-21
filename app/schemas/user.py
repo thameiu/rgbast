@@ -16,7 +16,7 @@ class UserCreate(SQLModel):
     firstname: str | None = Field(default=None, max_length=50)
     lastname: str | None = Field(default=None, max_length=50)
     password: str
-    birthdate: datetime = None
+    birthdate: datetime | None
 
     @field_validator("username")
     @classmethod
@@ -40,7 +40,7 @@ class UserCreateResponse(SQLModel):
     email: EmailStr
     firstname: str | None
     lastname: str | None
-    birthdate: datetime = None
+    birthdate: datetime | None = None
 
 
 class UserGetResponse(SQLModel):
