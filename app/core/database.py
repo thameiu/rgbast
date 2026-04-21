@@ -7,8 +7,10 @@ from fastapi import Depends
 
 load_dotenv()
 
-databaseUrl = os.getenv("DATABASE_URL", "dummy.postgrossomodo")
-engine = create_engine(databaseUrl)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable not set")
+engine = create_engine(DATABASE_URL)
 
 
 def get_session():
