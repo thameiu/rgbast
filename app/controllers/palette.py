@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 from app.core.database import SessionDep
 from app.schemas.palette import (
+    PaletteBranchMergeResponse,
     PaletteCreate,
     PaletteCreateResponse,
     PaletteHistoryGraphResponse,
@@ -59,6 +60,7 @@ class PaletteController:
                 palette_id=new_snapshot.palette_id,
                 palette_snapshot_id=new_snapshot.id,
                 parent_snapshot_id=new_snapshot.parent_snapshot_id,
+                branch_id=new_snapshot.branch_id,
                 comment=new_snapshot.comment,
                 created_at=new_snapshot.created_at,
                 palette_colors=[{"hex": c.hex, "label": c.label} for c in colors],
@@ -101,6 +103,57 @@ class PaletteController:
         except HTTPException:
             raise
         except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    # Merges a branch into the main branch by materializing the latest branch state in main.
+    def merge_branch_control(
+        palette_id: int,
+        branch_id: int,
+        current_user_id: int,
+        session: SessionDep,
+    ) -> PaletteBranchMergeResponse:
+        try:
+            branch, merged_snapshot, recorded_changes = PaletteService.merge_branch(
+                palette_id, branch_id, current_user_id, session
+            )
+            colors = PaletteService.get_snapshot_state(merged_snapshot, session)
+
+            added, deleted, modified = 0, 0, 0
+            for c in recorded_changes:
+                if c.previous_color_id and c.new_color_id:
+                    modified += 1
+                elif c.new_color_id:
+                    added += 1
+                elif c.previous_color_id:
+                    deleted += 1
+
+            return PaletteBranchMergeResponse(
+                palette_id=palette_id,
+                branch_id=branch.id,
+                merged_at=branch.merged_at,
+                palette_snapshot_id=merged_snapshot.id,
+                parent_snapshot_id=merged_snapshot.parent_snapshot_id,
+                comment=merged_snapshot.comment,
+                created_at=merged_snapshot.created_at,
+                palette_colors=[{"hex": c.hex, "label": c.label} for c in colors],
+                colors_added=added,
+                colors_deleted=deleted,
+                colors_modified=modified,
+            )
+        except PermissionError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
+            )
+        except Exception as e:
+            session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
             )

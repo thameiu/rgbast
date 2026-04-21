@@ -18,6 +18,24 @@ class Palette(SQLModel, table=True):
     )
 
 
+class Palette_Branch(SQLModel, table=True):
+    id: int = Field(primary_key=True, nullable=False)
+    palette_id: int = Field(
+        index=True, default=None, foreign_key="palette.id", nullable=False
+    )
+    title: str = Field(max_length=100, nullable=False)
+    merged_at: datetime | None = Field(
+        sa_type=TIMESTAMP(timezone=True),
+        default=None,
+        nullable=True,
+    )
+    created_at: datetime = Field(
+        sa_type=TIMESTAMP(timezone=True),
+        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP")},
+        nullable=False,
+    )
+
+
 # Snapshot of a palette, defining a saved state in its history.
 # A palette's full history can be browsed by finding the latest snapshot and getting its parent.
 class Palette_Snapshot(SQLModel, table=True):
@@ -28,6 +46,7 @@ class Palette_Snapshot(SQLModel, table=True):
     parent_snapshot_id: int | None = Field(
         default=None, foreign_key="palette_snapshot.id", nullable=True
     )
+    branch_id: int | None = Field(default=None, foreign_key="palette_branch.id")
     comment: str | None = Field(default=None, nullable=True)
     created_at: datetime = Field(
         sa_type=TIMESTAMP(timezone=True),

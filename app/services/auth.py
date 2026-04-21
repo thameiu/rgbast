@@ -33,7 +33,7 @@ class AuthService:
                 expires_delta=access_token_expires,
             )
             return LoginResponse(
-                jwt=token,
+                access_token=token,
                 username=result.username,
                 firstname=result.firstname,
                 lastname=result.lastname,

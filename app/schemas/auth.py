@@ -7,7 +7,7 @@ class Login(SQLModel):
 
 
 class LoginResponse(SQLModel):
-    jwt: str
+    access_token: str
     username: str
     firstname: str | None
     lastname: str | None
