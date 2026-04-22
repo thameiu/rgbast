@@ -49,4 +49,4 @@ class UserGetResponse(SQLModel):
     email: str
     firstname: str | None
     lastname: str | None
-    birthdate: datetime = None
+    birthdate: datetime | None = None
