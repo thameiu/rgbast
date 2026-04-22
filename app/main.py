@@ -6,9 +6,15 @@ from app.scripts.init_db import create_db_and_tables
 
 app = FastAPI(title="RGBAST API")
 
+ALLOWED_ORIGINS = [
+    "https://rgbast-app.vercel.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (TODO change in prod)
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
