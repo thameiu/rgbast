@@ -21,4 +21,6 @@ class UserService:
     def get_user_from_username(username: str, session: SessionDep):
         query = select(User).where(User.username == username)
         user = session.exec(query).first()
+        if user is None:
+            return None
         return UserGetResponse(**user.model_dump())

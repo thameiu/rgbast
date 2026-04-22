@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.exc import NoResultFound
+import jwt
 from app.schemas.auth import Login, LoginResponse
 from app.core.database import SessionDep
 
@@ -33,4 +34,26 @@ class AuthController:
             )
 
     def check_auth_control(token: str, session: SessionDep):
-        return AuthService.check_auth(token, session)
+        try:
+            user = AuthService.check_auth(token, session)
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found or inactive",
+                )
+            return user
+        except jwt.exceptions.InvalidSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Signature verification failed",
+            )
+        except jwt.exceptions.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+            )
+        except jwt.exceptions.InvalidTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token format",
+            )
