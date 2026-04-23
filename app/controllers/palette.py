@@ -3,11 +3,15 @@ from pydantic import ValidationError
 from app.core.database import SessionDep
 from app.models.user import User
 from app.schemas.palette import (
+    PaletteBranchDeleteResponse,
     PaletteByUsernameResponse,
     PaletteBranchMergeResponse,
+    PaletteBranchRevertResponse,
     PaletteCreate,
     PaletteCreateResponse,
+    PaletteDeleteResponse,
     PaletteHistoryGraphResponse,
+    PaletteMainRevertResponse,
     PaletteSnapshotSave,
     PaletteSnapshotSaveResponse,
 )
@@ -172,6 +176,96 @@ class PaletteController:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
             )
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    def delete_palette_control(
+        palette_id: int,
+        current_user_id: int,
+        session: SessionDep,
+    ) -> PaletteDeleteResponse:
+        try:
+            result = PaletteService.delete_palette(palette_id, current_user_id, session)
+            return PaletteDeleteResponse(**result)
+        except PermissionError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    def delete_branch_control(
+        palette_id: int,
+        branch_id: int,
+        current_user_id: int,
+        session: SessionDep,
+    ) -> PaletteBranchDeleteResponse:
+        try:
+            result = PaletteService.delete_branch(
+                palette_id, branch_id, current_user_id, session
+            )
+            return PaletteBranchDeleteResponse(**result)
+        except PermissionError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    def revert_main_control(
+        palette_id: int,
+        snapshot_id: int,
+        current_user_id: int,
+        session: SessionDep,
+    ) -> PaletteMainRevertResponse:
+        try:
+            result = PaletteService.revert_main_to_snapshot(
+                palette_id, snapshot_id, current_user_id, session
+            )
+            return PaletteMainRevertResponse(**result)
+        except PermissionError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    def revert_branch_control(
+        palette_id: int,
+        branch_id: int,
+        snapshot_id: int,
+        current_user_id: int,
+        session: SessionDep,
+    ) -> PaletteBranchRevertResponse:
+        try:
+            result = PaletteService.revert_branch_to_snapshot(
+                palette_id, branch_id, snapshot_id, current_user_id, session
+            )
+            return PaletteBranchRevertResponse(**result)
+        except PermissionError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         except Exception as e:
             session.rollback()
             raise HTTPException(

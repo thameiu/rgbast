@@ -1,6 +1,6 @@
 from datetime import timezone, datetime
 from collections import defaultdict
-from sqlmodel import desc, select
+from sqlmodel import delete, desc, select
 import difflib
 
 from app.core.database import SessionDep
@@ -17,6 +17,38 @@ from app.utils.lexicographic_ranker import LexicographicRanker
 
 
 class PaletteService:
+    @staticmethod
+    def _assert_palette_owner(palette_id: int, user_id: int, session: SessionDep) -> Palette:
+        palette = PaletteService.get_palette(palette_id, session)
+        if not palette:
+            raise ValueError("Palette not found.")
+        if palette.user_id != user_id:
+            raise PermissionError("You do not have permission to modify this palette.")
+        return palette
+
+    @staticmethod
+    def _delete_snapshots_and_related(snapshot_ids: list[int], session: SessionDep) -> tuple[int, int, int]:
+        if not snapshot_ids:
+            return 0, 0, 0
+
+        deleted_changes = session.exec(
+            delete(Palette_Change).where(Palette_Change.new_snapshot_id.in_(snapshot_ids))
+        ).rowcount or 0
+
+        deleted_changes += session.exec(
+            delete(Palette_Change).where(Palette_Change.previous_snapshot_id.in_(snapshot_ids))
+        ).rowcount or 0
+
+        deleted_colors = session.exec(
+            delete(Palette_Color).where(Palette_Color.palette_snapshot_id.in_(snapshot_ids))
+        ).rowcount or 0
+
+        deleted_snapshots = session.exec(
+            delete(Palette_Snapshot).where(Palette_Snapshot.id.in_(snapshot_ids))
+        ).rowcount or 0
+
+        return deleted_snapshots, deleted_colors, deleted_changes
+
     @staticmethod
     def _snapshot_to_commit(snap: Palette_Snapshot, session: SessionDep):
         colors = PaletteService.get_snapshot_state(snap, session)
@@ -543,3 +575,212 @@ class PaletteService:
         session.refresh(branch)
         session.refresh(merge_snapshot)
         return branch, merge_snapshot, recorded_changes
+
+    @staticmethod
+    def delete_palette(
+        palette_id: int,
+        user_id: int,
+        session: SessionDep,
+    ):
+        palette = PaletteService._assert_palette_owner(palette_id, user_id, session)
+
+        branch_ids = session.exec(
+            select(Palette_Branch.id).where(Palette_Branch.palette_id == palette_id)
+        ).all()
+        deleted_branches = len(branch_ids)
+
+        snapshot_ids = session.exec(
+            select(Palette_Snapshot.id).where(Palette_Snapshot.palette_id == palette_id)
+        ).all()
+        deleted_snapshots, deleted_colors, deleted_changes = (
+            PaletteService._delete_snapshots_and_related(snapshot_ids, session)
+        )
+
+        session.exec(delete(Palette_Branch).where(Palette_Branch.palette_id == palette_id))
+        session.delete(palette)
+        session.commit()
+
+        return {
+            "palette_id": palette_id,
+            "deleted_branches": deleted_branches,
+            "deleted_snapshots": deleted_snapshots,
+            "deleted_colors": deleted_colors,
+            "deleted_changes": deleted_changes,
+        }
+
+    @staticmethod
+    def delete_branch(
+        palette_id: int,
+        branch_id: int,
+        user_id: int,
+        session: SessionDep,
+    ):
+        PaletteService._assert_palette_owner(palette_id, user_id, session)
+
+        branch = PaletteService.get_palette_branch(palette_id, branch_id, session)
+        if not branch:
+            raise ValueError("Branch not found for this palette.")
+        if branch.merged_at:
+            raise ValueError("Merged branches cannot be deleted.")
+
+        snapshot_ids = session.exec(
+            select(Palette_Snapshot.id).where(
+                Palette_Snapshot.palette_id == palette_id,
+                Palette_Snapshot.branch_id == branch_id,
+            )
+        ).all()
+
+        deleted_snapshots, deleted_colors, deleted_changes = (
+            PaletteService._delete_snapshots_and_related(snapshot_ids, session)
+        )
+
+        session.delete(branch)
+        session.commit()
+
+        return {
+            "palette_id": palette_id,
+            "branch_id": branch_id,
+            "deleted_snapshots": deleted_snapshots,
+            "deleted_colors": deleted_colors,
+            "deleted_changes": deleted_changes,
+        }
+
+    @staticmethod
+    def revert_branch_to_snapshot(
+        palette_id: int,
+        branch_id: int,
+        snapshot_id: int,
+        user_id: int,
+        session: SessionDep,
+    ):
+        PaletteService._assert_palette_owner(palette_id, user_id, session)
+
+        branch = PaletteService.get_palette_branch(palette_id, branch_id, session)
+        if not branch:
+            raise ValueError("Branch not found for this palette.")
+        if branch.merged_at:
+            raise ValueError("Merged branches cannot be reverted.")
+
+        branch_snapshots = session.exec(
+            select(Palette_Snapshot)
+            .where(
+                Palette_Snapshot.palette_id == palette_id,
+                Palette_Snapshot.branch_id == branch_id,
+            )
+            .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
+        ).all()
+
+        if not branch_snapshots:
+            raise ValueError("Branch has no snapshots to revert.")
+
+        ordered_ids = [s.id for s in branch_snapshots]
+        if snapshot_id not in ordered_ids:
+            raise ValueError("Selected snapshot does not belong to this branch.")
+
+        target_index = ordered_ids.index(snapshot_id)
+        to_delete_ids = ordered_ids[:target_index]
+
+        deleted_snapshots, deleted_colors, deleted_changes = (
+            PaletteService._delete_snapshots_and_related(to_delete_ids, session)
+        )
+
+        session.commit()
+
+        return {
+            "palette_id": palette_id,
+            "branch_id": branch_id,
+            "target_snapshot_id": snapshot_id,
+            "latest_snapshot_id": snapshot_id,
+            "deleted_snapshots": deleted_snapshots,
+            "deleted_colors": deleted_colors,
+            "deleted_changes": deleted_changes,
+        }
+
+    @staticmethod
+    def revert_main_to_snapshot(
+        palette_id: int,
+        snapshot_id: int,
+        user_id: int,
+        session: SessionDep,
+    ):
+        PaletteService._assert_palette_owner(palette_id, user_id, session)
+
+        main_snapshots = session.exec(
+            select(Palette_Snapshot)
+            .where(
+                Palette_Snapshot.palette_id == palette_id,
+                Palette_Snapshot.branch_id == None,
+            )
+            .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
+        ).all()
+
+        if not main_snapshots:
+            raise ValueError("No main snapshots found.")
+
+        ordered_ids = [s.id for s in main_snapshots]
+        if snapshot_id not in ordered_ids:
+            raise ValueError("Selected snapshot does not belong to main.")
+
+        target_index = ordered_ids.index(snapshot_id)
+        to_delete_ids = set(ordered_ids[:target_index])
+
+        if not to_delete_ids:
+            raise ValueError("No snapshots to delete — this is already the latest.")
+
+        branches = session.exec(
+            select(Palette_Branch).where(Palette_Branch.palette_id == palette_id)
+        ).all()
+
+        total_deleted_snapshots = 0
+        total_deleted_colors = 0
+        total_deleted_changes = 0
+        deleted_branches = 0
+
+        for branch in branches:
+            branch_snaps = session.exec(
+                select(Palette_Snapshot)
+                .where(
+                    Palette_Snapshot.palette_id == palette_id,
+                    Palette_Snapshot.branch_id == branch.id,
+                )
+                .order_by(Palette_Snapshot.created_at, Palette_Snapshot.id)
+            ).all()
+
+            if not branch_snaps:
+                continue
+
+            first_snap = branch_snaps[0]
+
+            if first_snap.parent_snapshot_id in to_delete_ids:
+                # Branch forks from a deleted main snapshot — remove it entirely
+                snap_ids = [s.id for s in branch_snaps]
+                ds, dc, dch = PaletteService._delete_snapshots_and_related(snap_ids, session)
+                total_deleted_snapshots += ds
+                total_deleted_colors += dc
+                total_deleted_changes += dch
+                session.delete(branch)
+                deleted_branches += 1
+            elif branch.merged_at and any(
+                s.comment == f"Merge branch '{branch.title}'" and s.id in to_delete_ids
+                for s in main_snapshots
+            ):
+                # Branch was merged by a commit being deleted — unmerge it
+                branch.merged_at = None
+                session.add(branch)
+
+        ds, dc, dch = PaletteService._delete_snapshots_and_related(list(to_delete_ids), session)
+        total_deleted_snapshots += ds
+        total_deleted_colors += dc
+        total_deleted_changes += dch
+
+        session.commit()
+
+        return {
+            "palette_id": palette_id,
+            "target_snapshot_id": snapshot_id,
+            "latest_snapshot_id": snapshot_id,
+            "deleted_snapshots": total_deleted_snapshots,
+            "deleted_branches": deleted_branches,
+            "deleted_colors": total_deleted_colors,
+            "deleted_changes": total_deleted_changes,
+        }

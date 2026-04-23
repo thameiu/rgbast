@@ -102,6 +102,42 @@ class PaletteBranchMergeResponse(SQLModel):
     colors_modified: int = Field(default=0)
 
 
+class PaletteDeleteResponse(SQLModel):
+    palette_id: int
+    deleted_branches: int = Field(default=0)
+    deleted_snapshots: int = Field(default=0)
+    deleted_colors: int = Field(default=0)
+    deleted_changes: int = Field(default=0)
+
+
+class PaletteBranchDeleteResponse(SQLModel):
+    palette_id: int
+    branch_id: int
+    deleted_snapshots: int = Field(default=0)
+    deleted_colors: int = Field(default=0)
+    deleted_changes: int = Field(default=0)
+
+
+class PaletteBranchRevertResponse(SQLModel):
+    palette_id: int
+    branch_id: int
+    target_snapshot_id: int
+    latest_snapshot_id: int
+    deleted_snapshots: int = Field(default=0)
+    deleted_colors: int = Field(default=0)
+    deleted_changes: int = Field(default=0)
+
+
+class PaletteMainRevertResponse(SQLModel):
+    palette_id: int
+    target_snapshot_id: int
+    latest_snapshot_id: int
+    deleted_snapshots: int = Field(default=0)
+    deleted_branches: int = Field(default=0)
+    deleted_colors: int = Field(default=0)
+    deleted_changes: int = Field(default=0)
+
+
 class PaletteByUsernameItemResponse(SQLModel):
     id: int
     title: str
