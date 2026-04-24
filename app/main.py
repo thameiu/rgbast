@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import palettes, users, auth
+from app.api import palettes, users, auth, color
 from app.scripts.init_db import create_db_and_tables
 
 app = FastAPI(title="RGBAST API")
@@ -27,6 +27,7 @@ bearer_scheme = HTTPBearer()
 app.include_router(users.router, tags=["users"])
 app.include_router(auth.router, tags=["auth"])
 app.include_router(palettes.router, tags=["palettes"])
+app.include_router(color.router, tags=["color"])
 
 
 @app.get("/")
