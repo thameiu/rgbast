@@ -15,6 +15,7 @@ from app.schemas.color import (
     ColorBlindVariant,
     ColorCMYK,
     ColorContrast,
+    ColorContrastCheckResponse,
     ColorHSL,
     ColorHSB,
     ColorHWB,
@@ -87,6 +88,25 @@ class ColorService:
                 contrast=contrast,
             ),
             bast_score=round(bast_score, 2),
+        )
+
+    @staticmethod
+    def get_contrast_check(hex1: str, hex2: str) -> ColorContrastCheckResponse:
+        n1 = ColorService._normalize_hex(hex1)
+        n2 = ColorService._normalize_hex(hex2)
+        r1, g1, b1 = ColorService._hex_to_rgb(n1)
+        r2, g2, b2 = ColorService._hex_to_rgb(n2)
+        l1 = ColorService._relative_luminance(r1, g1, b1)
+        l2 = ColorService._relative_luminance(r2, g2, b2)
+        ratio = round(ColorService._contrast_ratio(l1, l2), 3)
+        return ColorContrastCheckResponse(
+            hex1=n1,
+            hex2=n2,
+            ratio=ratio,
+            aa_normal=ratio >= 4.5,
+            aa_large=ratio >= 3.0,
+            aaa_normal=ratio >= 7.0,
+            aaa_large=ratio >= 4.5,
         )
 
     @staticmethod

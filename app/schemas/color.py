@@ -81,6 +81,16 @@ class ColorAccessibility(SQLModel):
     contrast: ColorContrast
 
 
+class ColorContrastCheckResponse(SQLModel):
+    hex1: str
+    hex2: str
+    ratio: float
+    aa_normal: bool
+    aa_large: bool
+    aaa_normal: bool
+    aaa_large: bool
+
+
 class ColorInfoResponse(SQLModel):
     input_hex: str
     normalized_hex: str

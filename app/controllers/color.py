@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 
-from app.schemas.color import ColorInfoResponse
+from app.schemas.color import ColorContrastCheckResponse, ColorInfoResponse
 from app.services.color import ColorService
 
 
@@ -17,6 +17,18 @@ class ColorController:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(e),
             )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred: " + str(e),
+            )
+
+    @staticmethod
+    def get_contrast_check_control(hex1: str, hex2: str) -> ColorContrastCheckResponse:
+        try:
+            return ColorService.get_contrast_check(hex1, hex2)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
