@@ -479,10 +479,14 @@ class PaletteService:
                 raise ValueError("Parent snapshot not found for this palette.")
         else:
             if saveSchema.create_branch:
+                # Always branch from the latest main snapshot when no explicit parent is given.
+                # Using include_all_branches=True here would pick whichever snapshot was
+                # created most recently across all branches, which could be a branch snapshot
+                # — creating a dangling parent reference that breaks branch deletion later.
                 prev_snapshot, _ = PaletteService.get_latest_palette_snapshot(
                     palette_id,
                     session,
-                    include_all_branches=True,
+                    branch_id=None,
                 )
             else:
                 prev_snapshot = latest_target_snapshot
@@ -629,6 +633,24 @@ class PaletteService:
                 Palette_Snapshot.branch_id == branch_id,
             )
         ).all()
+
+        # Guard against FK violations: if any snapshot outside this branch has a
+        # parent_snapshot_id pointing into this branch's snapshots, deletion would
+        # fail at the DB level. This can happen if a branch was accidentally forked
+        # from a branch snapshot instead of a main snapshot.
+        if snapshot_ids:
+            dependent = session.exec(
+                select(Palette_Snapshot.id).where(
+                    Palette_Snapshot.parent_snapshot_id.in_(snapshot_ids),
+                    Palette_Snapshot.branch_id != branch_id,
+                )
+            ).first()
+            if dependent:
+                raise ValueError(
+                    "Cannot delete this branch: one or more of its snapshots are "
+                    "referenced as a parent by snapshots in another branch. "
+                    "Delete the dependent branch first."
+                )
 
         deleted_snapshots, deleted_colors, deleted_changes = (
             PaletteService._delete_snapshots_and_related(snapshot_ids, session)
