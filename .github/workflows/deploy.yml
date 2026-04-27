@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -17,4 +18,19 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            echo "0 : Deploy triggered"
+            set -x
+            echo "WHO AM I"
+            whoami
+
+            echo "WHERE AM I"
+            pwd
+
+            echo "HOME CONTENT"
+            ls -la /home/deploy || true
+
+            echo "SCRIPTS"
+            ls -la /home/deploy/scripts || true
+            cat /home/deploy/scripts/d.sh
+
+            echo "RUN SCRIPT"
+            bash -x /home/deploy/scripts/d.sh

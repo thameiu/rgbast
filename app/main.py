@@ -29,4 +29,4 @@ app.include_router(color.router, tags=["color"])
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to RGBAST ! If cou can read this, you can read this."}
+    return {"message": "Welcome to RGBAST ! If cou can read this, you can read this, like really read this, like for real."}
