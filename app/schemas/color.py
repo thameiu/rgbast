@@ -1,4 +1,7 @@
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Field
+from pydantic import field_validator
+
+HARMONY_MODES = {"random", "analogous", "complementary", "triadic", "split_complementary", "tetradic"}
 
 
 class ColorRGB(SQLModel):
@@ -107,3 +110,31 @@ class ColorInfoResponse(SQLModel):
     accessibility: ColorAccessibility
     bast_score: float
     label_is_approximate: bool
+
+
+class PaletteGenerateRequest(SQLModel):
+    count: int = Field(default=5, ge=2, le=8)
+    base_colors: list[str] = Field(default_factory=list)
+    contrast: int = Field(default=5, ge=1, le=10)
+    include_shades: bool = True
+    harmony: str = "random"
+
+    @field_validator("base_colors")
+    @classmethod
+    def validate_base_colors(cls, v: list[str]) -> list[str]:
+        return v[:3]
+
+    @field_validator("harmony")
+    @classmethod
+    def validate_harmony(cls, v: str) -> str:
+        if v not in HARMONY_MODES:
+            raise ValueError(f"harmony must be one of: {', '.join(sorted(HARMONY_MODES))}")
+        return v
+
+
+class GeneratedColor(SQLModel):
+    hex: str
+
+
+class PaletteGenerateResponse(SQLModel):
+    colors: list[GeneratedColor]

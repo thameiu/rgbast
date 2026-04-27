@@ -1,9 +1,14 @@
 from fastapi import APIRouter
 
 from app.controllers.color import ColorController
-from app.schemas.color import ColorContrastCheckResponse, ColorInfoResponse
+from app.schemas.color import ColorContrastCheckResponse, ColorInfoResponse, PaletteGenerateRequest, PaletteGenerateResponse
 
 router = APIRouter()
+
+
+@router.post("/palette/generate", response_model=PaletteGenerateResponse, status_code=200)
+def generate_palette_handler(request: PaletteGenerateRequest):
+    return ColorController.generate_palette_control(request)
 
 
 @router.get("/color/{hex}/contrast/{hex2}", response_model=ColorContrastCheckResponse, status_code=200)

@@ -1,5 +1,6 @@
 import colorsys
 import math
+import random as _random
 import re
 
 try:
@@ -25,6 +26,9 @@ from app.schemas.color import (
     ColorLUV,
     ColorRGB,
     ColorXYZ,
+    GeneratedColor,
+    PaletteGenerateRequest,
+    PaletteGenerateResponse,
 )
 
 
@@ -380,3 +384,205 @@ class ColorService:
 
         # Calibrated normalisation: max raw ≈ 0.6391 (numerically verified at rgb≈(48,88,128))
         return max(0.0, min(100.0, raw / 0.6391 * 100.0))
+
+
+# Hue offsets for each harmony mode (degrees).  The pool is cycled as needed.
+_HARMONY_OFFSETS: dict[str, list[float]] = {
+    "random": [],
+    "analogous":           [0, 25, -25, 50, -50, 15, -15, 35, -35],
+    "complementary":       [0, 180, 20, 200, -20, 160, 10, 190],
+    "triadic":             [0, 120, 240, 15, 135, 255, -15, 105, 225],
+    "split_complementary": [0, 150, 210, 20, 170, 230, -20, 130, 190],
+    "tetradic":            [0, 90, 180, 270, 15, 105, 195, 285],
+}
+
+
+class PaletteGeneratorService:
+
+    @staticmethod
+    def _rgb_distance(hex1: str, hex2: str) -> float:
+        r1, g1, b1 = ColorService._hex_to_rgb(hex1)
+        r2, g2, b2 = ColorService._hex_to_rgb(hex2)
+        return math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2)
+
+    @staticmethod
+    def _bast(hex_str: str) -> float:
+        r, g, b = ColorService._hex_to_rgb(hex_str)
+        return ColorService._bast_score(r, g, b)
+
+    # Absolute minimum RGB distance between any two colors in a palette.
+    # Prevents near-identical swatches even when candidates are scarce.
+    _HARD_MIN_DIST = 25.0
+
+    @staticmethod
+    def _pick_diverse(
+        candidates: list[GeneratedColor],
+        n: int,
+        seed_colors: list[GeneratedColor],
+        min_dist: float = 40.0,
+    ) -> list[GeneratedColor]:
+        """Greedy: pick n candidates with lowest BAST score spaced >= min_dist apart."""
+        hard = PaletteGeneratorService._HARD_MIN_DIST
+        available = sorted(candidates, key=lambda c: PaletteGeneratorService._bast(c.hex))
+        picked: list[GeneratedColor] = list(seed_colors)
+        result: list[GeneratedColor] = []
+
+        while len(result) < n:
+            chosen: GeneratedColor | None = None
+            # Fallback chain: preferred → half → hard floor (never zero)
+            for dist_threshold in (min_dist, max(hard, min_dist / 2), hard):
+                for cand in available:
+                    if all(PaletteGeneratorService._rgb_distance(cand.hex, p.hex) >= dist_threshold
+                           for p in picked):
+                        chosen = cand
+                        break
+                if chosen is not None:
+                    break
+
+            if chosen is None:
+                break
+            result.append(chosen)
+            picked.append(chosen)
+            available.remove(chosen)
+
+        return result
+
+    @staticmethod
+    def generate(request: PaletteGenerateRequest) -> PaletteGenerateResponse:
+        rng = _random.Random()
+        count = request.count
+        c_norm = (request.contrast - 1) / 9.0  # 0.0 → 1.0
+
+        # ── Parse caller-supplied base colors ────────────────────────────────
+        base_hexes: list[str] = []
+        base_hues: list[float] = []
+        for raw in request.base_colors:
+            try:
+                norm = ColorService._normalize_hex(raw)
+                r, g, b = ColorService._hex_to_rgb(norm)
+                h, _s, _v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                base_hexes.append(norm)
+                base_hues.append(h * 360.0)
+            except Exception:
+                pass
+
+        # ── Build hue pool ───────────────────────────────────────────────────
+        anchor: float = base_hues[0] if base_hues else rng.uniform(0, 360)
+        if request.harmony == "random" and not base_hues:
+            start = rng.uniform(0, 360)
+            hue_pool = [(start + i * (360 / max(count, 1)) + rng.uniform(-22, 22)) % 360
+                        for i in range(max(count, 8))]
+        else:
+            offsets = _HARMONY_OFFSETS.get(request.harmony) or [0, 30, -30, 60, -60, 90, 120]
+            anchors = base_hues if base_hues else [anchor]
+            hue_pool = [(a + off) % 360 for a in anchors for off in offsets]
+
+        hue_pool = [(h + rng.uniform(-7, 7)) % 360 for h in hue_pool]
+        if not hue_pool:
+            hue_pool = [rng.uniform(0, 360) for _ in range(count)]
+
+        # ── Lightness / saturation ranges controlled by contrast ─────────────
+        # contrast=1 (c_norm=0): narrow tonal band, muted saturation
+        # contrast=10 (c_norm=1): near-full dark→light range, vivid saturation
+        if request.include_shades:
+            l_lo = max(8,  int(50 - c_norm * 42))   # 8 … 50
+            l_hi = min(93, int(50 + c_norm * 43))   # 50 … 93
+        else:
+            l_lo = max(12, int(45 - c_norm * 33))   # 45 … 12
+            l_hi = min(90, int(55 + c_norm * 35))   # 55 … 90
+
+        s_lo = max(20, int(45 + c_norm * 35))       # 45 … 80
+        s_hi = min(100, int(70 + c_norm * 30))      # 70 … 100
+
+        # ── Adapt to base color mood (dark / muted base → match that aesthetic) ──
+        # Use HLS saturation + lightness since the generator works in HLS space.
+        if base_hexes:
+            base_s_vals: list[float] = []
+            base_l_vals: list[float] = []
+            for bh in base_hexes:
+                br, bg, bb = ColorService._hex_to_rgb(bh)
+                brf, bgf, bbf = br / 255.0, bg / 255.0, bb / 255.0
+                _, bl_hls, bs_hls = colorsys.rgb_to_hls(brf, bgf, bbf)
+                base_s_vals.append(bs_hls)   # HLS saturation: matches generator
+                base_l_vals.append(bl_hls)
+
+            avg_s = sum(base_s_vals) / len(base_s_vals)   # 0–1
+            avg_l = sum(base_l_vals) / len(base_l_vals)   # 0–1
+
+            # Muted base (low HLS saturation): scale down saturation targets
+            if avg_s < 0.55:
+                scale = max(0.20, avg_s / 0.70)
+                s_lo = max(10, int(s_lo * scale))
+                s_hi = max(s_lo + 15, int(s_hi * scale))
+
+            # Dark base (low lightness): pull l_hi down to stay in dark territory
+            if avg_l < 0.35:
+                l_hi = min(l_hi, max(l_lo + 20, int(avg_l * 100 + 35)))
+
+            # Light / washed-out base: push l_lo up
+            elif avg_l > 0.65:
+                l_lo = max(l_lo, min(l_hi - 20, int(avg_l * 100 - 35)))
+
+        def _make(hue_deg: float, l_pct: float) -> GeneratedColor:
+            s_pct = rng.uniform(s_lo, s_hi)
+            if l_pct < 14 or l_pct > 90:
+                s_pct = min(s_pct, 72)
+            r_f, g_f, b_f = colorsys.hls_to_rgb(hue_deg / 360.0, l_pct / 100.0, s_pct / 100.0)
+            return GeneratedColor(hex=ColorService._rgb_to_hex(
+                max(0, min(255, round(r_f * 255))),
+                max(0, min(255, round(g_f * 255))),
+                max(0, min(255, round(b_f * 255))),
+            ))
+
+        # ── Fill slots not occupied by base colors ────────────────────────────
+        remaining = max(0, count - len(base_hexes))
+        gen_colors: list[GeneratedColor] = []
+        OVERSAMPLE = 4
+
+        if request.include_shades and remaining >= 2:
+            # Shade families: fewer hues, spread lightness within each family.
+            # Oversample each shade and pick the least-bastard candidate.
+            n_families = max(1, remaining // 2)
+            family_sizes = [
+                remaining // n_families + (1 if i < remaining % n_families else 0)
+                for i in range(n_families)
+            ]
+            for fam_idx, fam_size in enumerate(family_sizes):
+                hue_deg = hue_pool[fam_idx % len(hue_pool)]
+                for shade_idx in range(fam_size):
+                    t = shade_idx / max(1, fam_size - 1) if fam_size > 1 else 0.5
+                    l_center = l_lo + t * (l_hi - l_lo)
+                    candidates = [
+                        _make(hue_deg, max(l_lo, min(l_hi, l_center + rng.uniform(-6, 6))))
+                        for _ in range(OVERSAMPLE)
+                    ]
+                    gen_colors.append(min(candidates, key=lambda c: PaletteGeneratorService._bast(c.hex)))
+        else:
+            # Generate oversampled candidates, then pick diverse low-BAST set
+            all_candidates: list[GeneratedColor] = []
+            for i in range(remaining * OVERSAMPLE):
+                hue_deg = hue_pool[i % len(hue_pool)]
+                if c_norm > 0.5 and remaining > 2:
+                    step = (l_hi - l_lo) / (remaining - 1)
+                    l_pct = l_lo + step * (i // OVERSAMPLE) + rng.uniform(-step * 0.4, step * 0.4)
+                else:
+                    l_pct = rng.uniform(l_lo, l_hi)
+                all_candidates.append(_make(hue_deg, max(l_lo, min(l_hi, l_pct))))
+
+            base_gen = [GeneratedColor(hex=h) for h in base_hexes]
+            min_dist = max(30, int(30 + c_norm * 35))   # 30 … 65: high contrast → more RGB spread
+            gen_colors = PaletteGeneratorService._pick_diverse(all_candidates, remaining, base_gen, min_dist)
+
+        # Sort dark→light at high contrast; shuffle for variety otherwise
+        if c_norm > 0.6:
+            gen_colors.sort(key=lambda c: (
+                int(c.hex[0:2], 16) * 0.299
+                + int(c.hex[2:4], 16) * 0.587
+                + int(c.hex[4:6], 16) * 0.114
+            ))
+        else:
+            rng.shuffle(gen_colors)
+
+        # Base colors always appear first in the palette
+        base_generated = [GeneratedColor(hex=h) for h in base_hexes]
+        return PaletteGenerateResponse(colors=(base_generated + gen_colors)[:count])
