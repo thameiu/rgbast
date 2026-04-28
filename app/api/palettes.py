@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from app.core.database import SessionDep
 from app.middlewares.auth import verify_token
 from app.controllers.palette import PaletteController
@@ -14,6 +14,7 @@ from app.schemas.palette import (
     PaletteMainRevertResponse,
     PaletteSnapshotSave,
     PaletteSnapshotSaveResponse,
+    PaletteUpdate,
 )
 from app.models.user import User
 
@@ -63,6 +64,35 @@ def get_palette_history_handler(palette_id: int, session: SessionDep):
 )
 def get_palettes_by_username_handler(username: str, session: SessionDep):
     return PaletteController.get_palettes_by_username_control(username, session)
+
+
+@router.get(
+    "/users/{username}/palettes/history",
+    response_model=PaletteHistoryGraphResponse,
+    status_code=200,
+)
+def get_palette_history_by_path_handler(
+    username: str,
+    session: SessionDep,
+    path: str = Query(..., description="folder/subfolder/palette"),
+):
+    return PaletteController.get_palette_history_by_path_control(username, path, session)
+
+
+@router.put(
+    "/palettes/{palette_id}",
+    response_model=PaletteCreateResponse,
+    status_code=200,
+)
+def update_palette_handler(
+    palette_id: int,
+    updateSchema: PaletteUpdate,
+    session: SessionDep,
+    current_user: User = Depends(verify_token),
+):
+    return PaletteController.update_palette_control(
+        palette_id, updateSchema, current_user.id, session
+    )
 
 
 @router.post(

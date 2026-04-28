@@ -14,6 +14,7 @@ from app.schemas.palette import (
     PaletteMainRevertResponse,
     PaletteSnapshotSave,
     PaletteSnapshotSaveResponse,
+    PaletteUpdate,
 )
 from app.services.palette import PaletteService
 
@@ -25,7 +26,11 @@ class PaletteController:
     ) -> PaletteCreateResponse:
         try:
             palette = PaletteService.create_palette(paletteSchema, user_id, session)
-            return PaletteCreateResponse(**palette.model_dump())
+            folder_path = PaletteService._get_folder_path(palette.folder_id, session)
+            return PaletteCreateResponse(
+                **palette.model_dump(),
+                folder_path=folder_path,
+            )
 
         except ValidationError as e:
             raise HTTPException(
@@ -106,7 +111,7 @@ class PaletteController:
             if not owner:
                 raise HTTPException(status_code=404, detail="Palette owner not found.")
 
-            history_data = PaletteService.get_palette_history(palette_id, session, owner.username, palette.title)
+            history_data = PaletteService.get_palette_history(palette, session, owner.username)
 
             return PaletteHistoryGraphResponse(**history_data)
 
@@ -127,6 +132,57 @@ class PaletteController:
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    # Retrieves palette history by username + path (folder/sub/palette).
+    def get_palette_history_by_path_control(
+        username: str, path: str, session: SessionDep
+    ) -> PaletteHistoryGraphResponse:
+        try:
+            palette = PaletteService.get_palette_by_path(username, path, session)
+            owner = session.get(User, palette.user_id)
+            if not owner:
+                raise HTTPException(status_code=404, detail="Palette owner not found.")
+
+            history_data = PaletteService.get_palette_history(palette, session, owner.username)
+            return PaletteHistoryGraphResponse(**history_data)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            )
+
+    # Update palette title/description/folder assignment.
+    def update_palette_control(
+        palette_id: int,
+        updateSchema: PaletteUpdate,
+        current_user_id: int,
+        session: SessionDep,
+    ) -> PaletteCreateResponse:
+        try:
+            palette = PaletteService.update_palette(
+                palette_id, updateSchema, current_user_id, session
+            )
+            folder_path = PaletteService._get_folder_path(palette.folder_id, session)
+            return PaletteCreateResponse(
+                **palette.model_dump(),
+                folder_path=folder_path,
+            )
+        except PermissionError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
+            )
+        except Exception as e:
+            session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
             )

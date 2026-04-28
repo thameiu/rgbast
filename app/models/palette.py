@@ -9,6 +9,10 @@ class Palette(SQLModel, table=True):
         index=True, default=None, foreign_key="user.id",
         nullable=False, sa_type=BigInteger(),
     )
+    folder_id: int | None = Field(
+        index=True, default=None, foreign_key="folder.id",
+        nullable=True, sa_type=BigInteger(),
+    )
     title: str = Field(index=True, default=None, nullable=False)
     description: str | None = Field(default=None, nullable=True)
 

@@ -8,6 +8,8 @@ import re
 class PaletteCreate(SQLModel):
     title: str = Field(max_length=50)
     description: str = Field(max_length=500)
+    folder_id: int | None = Field(default=None)
+    folder_path: list[str] | None = Field(default=None)
     palette_colors: list[PaletteColorSave] = Field(default=[])
 
     @field_validator("title")
@@ -18,17 +20,46 @@ class PaletteCreate(SQLModel):
             raise ValueError("Title is invalid.")
         return title
 
+    @field_validator("folder_path")
+    @classmethod
+    def validate_folder_path_palette_create(cls, folder_path: list[str] | None) -> list[str] | None:
+        if folder_path is None:
+            return None
+        pattern = r"^[a-zA-Z0-9._-]+$"
+        for name in folder_path:
+            if not re.match(pattern, name):
+                raise ValueError("Folder path is invalid.")
+        return folder_path
+
 
 class PaletteCreateResponse(SQLModel):
     id: int
     title: str
     description: str
+    folder_id: int | None
+    folder_path: list[str] = Field(default=[])
     created_at: datetime
 
 
 class PaletteSave(SQLModel):
     title: str
     description: str
+
+
+class PaletteUpdate(SQLModel):
+    title: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
+    folder_id: int | None = Field(default=None)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title_palette_update(cls, title: str | None) -> str | None:
+        if title is None:
+            return None
+        pattern = r"^[a-zA-Z0-9._-]+$"
+        if not re.match(pattern, title):
+            raise ValueError("Title is invalid.")
+        return title
 
 
 class PaletteColorSave(SQLModel):
@@ -82,8 +113,11 @@ class PaletteBranchHistoryResponse(SQLModel):
 
 # The overall repository history
 class PaletteHistoryGraphResponse(SQLModel):
+    palette_id: int
     owner_username: str
     title: str
+    description: str | None = Field(default=None)
+    folder_path: list[str] = Field(default=[])
     main: list[PaletteCommitResponse] = Field(default=[])
     branches: list[PaletteBranchHistoryResponse] = Field(default=[])
 
@@ -141,6 +175,9 @@ class PaletteMainRevertResponse(SQLModel):
 class PaletteByUsernameItemResponse(SQLModel):
     id: int
     title: str
+    description: str | None = Field(default=None)
+    folder_id: int | None = Field(default=None)
+    folder_path: list[str] = Field(default=[])
     created_at: datetime
     latest_main_snapshot: PaletteCommitResponse | None = Field(default=None)
 

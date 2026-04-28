@@ -2,8 +2,10 @@ from datetime import timezone, datetime
 from collections import defaultdict
 from sqlmodel import delete, desc, select
 import difflib
+import re
 
 from app.core.database import SessionDep
+from app.models.folder import Folder
 from app.models.palette import (
     Palette,
     Palette_Branch,
@@ -12,11 +14,98 @@ from app.models.palette import (
     Palette_Snapshot,
 )
 from app.models.user import User
-from app.schemas.palette import PaletteCreate, PaletteSnapshotSave
+from app.schemas.palette import PaletteCreate, PaletteSnapshotSave, PaletteUpdate
 from app.utils.lexicographic_ranker import LexicographicRanker
 
 
 class PaletteService:
+    @staticmethod
+    def _assert_palette_name(title: str) -> None:
+        pattern = r"^[a-zA-Z0-9._-]+$"
+        if not re.match(pattern, title):
+            raise ValueError("Title is invalid.")
+
+    @staticmethod
+    def _get_user(user_id: int, session: SessionDep) -> User:
+        user = session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found.")
+        return user
+
+    @staticmethod
+    def _assert_folder_owner(folder_id: int | None, user_id: int, session: SessionDep) -> Folder | None:
+        if folder_id is None:
+            return None
+        folder = session.get(Folder, folder_id)
+        if not folder:
+            raise ValueError("Folder not found.")
+        if folder.user_id != user_id:
+            raise PermissionError("You do not have permission to use this folder.")
+        return folder
+
+    @staticmethod
+    def _get_folder_path(folder_id: int | None, session: SessionDep) -> list[str]:
+        if folder_id is None:
+            return []
+        names: list[str] = []
+        seen: set[int] = set()
+        current_id = folder_id
+        while current_id is not None:
+            if current_id in seen:
+                raise ValueError("Folder hierarchy is invalid.")
+            seen.add(current_id)
+            folder = session.get(Folder, current_id)
+            if not folder:
+                raise ValueError("Folder not found.")
+            names.append(folder.name)
+            current_id = folder.parent_folder_id
+        names.reverse()
+        return names
+
+    @staticmethod
+    def _resolve_folder_path(user_id: int, folder_names: list[str], session: SessionDep) -> int | None:
+        parent_id: int | None = None
+        for name in folder_names:
+            query = select(Folder).where(
+                Folder.user_id == user_id,
+                Folder.name == name,
+            )
+            if parent_id is None:
+                query = query.where(Folder.parent_folder_id.is_(None))
+            else:
+                query = query.where(Folder.parent_folder_id == parent_id)
+            folder = session.exec(query).first()
+            if not folder:
+                raise ValueError("Folder path not found.")
+            parent_id = folder.id
+        return parent_id
+
+    @staticmethod
+    def _assert_path_length(username: str, folder_path: list[str], palette_title: str) -> None:
+        full_path = "/users/" + "/".join([username] + folder_path + [palette_title])
+        if len(full_path) > 300:
+            raise ValueError("Palette path is too long.")
+
+    @staticmethod
+    def _ensure_palette_unique(
+        user_id: int,
+        folder_id: int | None,
+        title: str,
+        session: SessionDep,
+        ignore_palette_id: int | None = None,
+    ) -> None:
+        query = select(Palette).where(
+            Palette.user_id == user_id,
+            Palette.title == title,
+        )
+        if folder_id is None:
+            query = query.where(Palette.folder_id.is_(None))
+        else:
+            query = query.where(Palette.folder_id == folder_id)
+        if ignore_palette_id is not None:
+            query = query.where(Palette.id != ignore_palette_id)
+        if session.exec(query).first():
+            raise ValueError("Palette name already exists in this folder.")
     @staticmethod
     def _assert_palette_owner(palette_id: int, user_id: int, session: SessionDep) -> Palette:
         palette = PaletteService.get_palette(palette_id, session)
@@ -68,10 +157,27 @@ class PaletteService:
 
     # Creates a new palette along with its initial snapshot and starting colors.
     def create_palette(paletteSchema: PaletteCreate, user_id: int, session: SessionDep):
+        folder_id = paletteSchema.folder_id
+        if folder_id is None and paletteSchema.folder_path:
+            folder_id = PaletteService._resolve_folder_path(
+                user_id, paletteSchema.folder_path, session
+            )
+
+        PaletteService._assert_palette_name(paletteSchema.title)
+        PaletteService._assert_folder_owner(folder_id, user_id, session)
+        PaletteService._ensure_palette_unique(
+            user_id, folder_id, paletteSchema.title, session
+        )
+
+        user = PaletteService._get_user(user_id, session)
+        folder_path = PaletteService._get_folder_path(folder_id, session)
+        PaletteService._assert_path_length(user.username, folder_path, paletteSchema.title)
+
         new_palette = Palette(
             user_id=user_id,
             title=paletteSchema.title,
             description=paletteSchema.description,
+            folder_id=folder_id,
         )
         session.add(new_palette)
         session.flush()
@@ -103,6 +209,33 @@ class PaletteService:
         query = select(Palette).where(Palette.id == palette_id)
         return session.exec(query).first()
 
+    # Resolves a palette by username and folder path (e.g. "folder/sub/palette").
+    def get_palette_by_path(username: str, path: str, session: SessionDep) -> Palette:
+        user = session.exec(select(User).where(User.username == username)).first()
+        if not user:
+            raise ValueError("User not found.")
+
+        segments = [seg for seg in path.split("/") if seg]
+        if not segments:
+            raise ValueError("Palette path is invalid.")
+
+        palette_title = segments[-1]
+        folder_names = segments[:-1]
+        folder_id = PaletteService._resolve_folder_path(user.id, folder_names, session)
+
+        query = select(Palette).where(
+            Palette.user_id == user.id,
+            Palette.title == palette_title,
+        )
+        if folder_id is None:
+            query = query.where(Palette.folder_id.is_(None))
+        else:
+            query = query.where(Palette.folder_id == folder_id)
+        palette = session.exec(query).first()
+        if not palette:
+            raise ValueError("Palette not found.")
+        return palette
+
     # Retrieves all palettes for a username with the latest main-branch snapshot.
     def get_palettes_by_username(username: str, session: SessionDep):
         user = session.exec(select(User).where(User.username == username)).first()
@@ -117,6 +250,7 @@ class PaletteService:
 
         result = []
         for palette in palettes:
+            folder_path = PaletteService._get_folder_path(palette.folder_id, session)
             latest_snapshot, _ = PaletteService.get_latest_palette_snapshot(
                 palette.id, session, branch_id=None
             )
@@ -124,6 +258,9 @@ class PaletteService:
                 {
                     "id": palette.id,
                     "title": palette.title,
+                    "description": palette.description,
+                    "folder_id": palette.folder_id,
+                    "folder_path": folder_path,
                     "created_at": palette.created_at,
                     "latest_main_snapshot": (
                         PaletteService._snapshot_to_commit(latest_snapshot, session)
@@ -242,7 +379,8 @@ class PaletteService:
         return added, deleted, modified
 
     # Builds a graph of a palette's history, grouping snapshots by explicit branches.
-    def get_palette_history(palette_id: int, session: SessionDep, owner_username: str, title: str):
+    def get_palette_history(palette: Palette, session: SessionDep, owner_username: str):
+        palette_id = palette.id
         main_snapshots = session.exec(
             select(Palette_Snapshot)
             .where(Palette_Snapshot.palette_id == palette_id)
@@ -256,9 +394,14 @@ class PaletteService:
             .order_by(Palette_Branch.created_at)
         ).all()
 
+        folder_path = PaletteService._get_folder_path(palette.folder_id, session)
+
         return {
+            "palette_id": palette_id,
             "owner_username": owner_username,
-            "title": title,
+            "title": palette.title,
+            "description": palette.description,
+            "folder_path": folder_path,
             "main": [PaletteService._snapshot_to_commit(snap, session) for snap in main_snapshots],
             "branches": [
                 {
@@ -281,6 +424,45 @@ class PaletteService:
                 for branch in branches
             ],
         }
+
+    # Update palette title/description/folder assignment.
+    def update_palette(
+        palette_id: int,
+        updateSchema: PaletteUpdate,
+        user_id: int,
+        session: SessionDep,
+    ) -> Palette:
+        palette = PaletteService._assert_palette_owner(palette_id, user_id, session)
+
+        next_title = updateSchema.title if updateSchema.title is not None else palette.title
+        next_description = (
+            updateSchema.description
+            if updateSchema.description is not None
+            else palette.description
+        )
+        next_folder_id = (
+            updateSchema.folder_id
+            if updateSchema.folder_id is not None
+            else palette.folder_id
+        )
+
+        PaletteService._assert_palette_name(next_title)
+        PaletteService._assert_folder_owner(next_folder_id, user_id, session)
+        PaletteService._ensure_palette_unique(
+            user_id, next_folder_id, next_title, session, ignore_palette_id=palette.id
+        )
+
+        user = PaletteService._get_user(user_id, session)
+        folder_path = PaletteService._get_folder_path(next_folder_id, session)
+        PaletteService._assert_path_length(user.username, folder_path, next_title)
+
+        palette.title = next_title
+        palette.description = next_description
+        palette.folder_id = next_folder_id
+        session.add(palette)
+        session.commit()
+        session.refresh(palette)
+        return palette
 
     # Creates a branch and applies default naming when no title is provided.
     def create_palette_branch(
