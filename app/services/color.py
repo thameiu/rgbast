@@ -482,17 +482,18 @@ class PaletteGeneratorService:
             hue_pool = [rng.uniform(0, 360) for _ in range(count)]
 
         # ── Lightness / saturation ranges controlled by contrast ─────────────
-        # contrast=1 (c_norm=0): narrow tonal band, muted saturation
-        # contrast=10 (c_norm=1): near-full dark→light range, vivid saturation
+        # contrast=1 (c_norm=0): narrow tonal band around mid-grey → harmonious, similar tones
+        # contrast=10 (c_norm=1): wide dark→light spread → clearly distinct brightness levels
+        # Saturation stays moderate so neither very-dark nor very-light colors look muddy/washed.
         if request.include_shades:
-            l_lo = max(8,  int(50 - c_norm * 42))   # 8 … 50
-            l_hi = min(93, int(50 + c_norm * 43))   # 50 … 93
+            l_lo = max(10, int(45 - c_norm * 33))   # 45 … 12
+            l_hi = min(92, int(55 + c_norm * 35))   # 55 … 90
         else:
-            l_lo = max(12, int(45 - c_norm * 33))   # 45 … 12
-            l_hi = min(90, int(55 + c_norm * 35))   # 55 … 90
+            l_lo = max(18, int(45 - c_norm * 25))   # 45 … 20
+            l_hi = min(84, int(55 + c_norm * 25))   # 55 … 80
 
-        s_lo = max(20, int(45 + c_norm * 35))       # 45 … 80
-        s_hi = min(100, int(70 + c_norm * 30))      # 70 … 100
+        s_lo = 45                                    # constant moderate saturation
+        s_hi = 78                                    # avoids muddy darks / washed-out lights
 
         # ── Adapt to base color mood (dark / muted base → match that aesthetic) ──
         # Use HLS saturation + lightness since the generator works in HLS space.
@@ -570,7 +571,7 @@ class PaletteGeneratorService:
                 all_candidates.append(_make(hue_deg, max(l_lo, min(l_hi, l_pct))))
 
             base_gen = [GeneratedColor(hex=h) for h in base_hexes]
-            min_dist = max(30, int(30 + c_norm * 35))   # 30 … 65: high contrast → more RGB spread
+            min_dist = max(20, int(20 + c_norm * 60))   # 20 … 80: high contrast → colors must be very different
             gen_colors = PaletteGeneratorService._pick_diverse(all_candidates, remaining, base_gen, min_dist)
 
         # Sort dark→light at high contrast; shuffle for variety otherwise
