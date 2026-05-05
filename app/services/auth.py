@@ -27,7 +27,7 @@ class AuthService:
         # Team tout à la fois ou vérifications séparées ? A vos claviers !
         result = session.exec(query).first()
         if result and hasher.verify(loginSchema.password, result.password):
-            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_DAYS)
+            access_token_expires = timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
             token = AuthService.create_access_token(
                 data={"sub": result.username},
                 expires_delta=access_token_expires,
