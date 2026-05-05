@@ -2,7 +2,7 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from app.schemas.color import ColorContrastCheckResponse, ColorInfoResponse, PaletteGenerateRequest, PaletteGenerateResponse
-from app.services.color import ColorService, PaletteGeneratorService
+from app.services.color import ColorService, PaletteGeneratorService, PaletteImageService
 
 
 class ColorController:
@@ -39,6 +39,18 @@ class ColorController:
     def generate_palette_control(request: PaletteGenerateRequest) -> PaletteGenerateResponse:
         try:
             return PaletteGeneratorService.generate(request)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred: " + str(e),
+            )
+
+    @staticmethod
+    def generate_palette_from_image_control(image_bytes: bytes, count: int) -> PaletteGenerateResponse:
+        try:
+            return PaletteImageService.extract_dominant_palette(image_bytes, count)
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         except Exception as e:

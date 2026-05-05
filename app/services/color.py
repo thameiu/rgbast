@@ -1,7 +1,10 @@
 import colorsys
+from collections import Counter
+from io import BytesIO
 import math
 import random as _random
 import re
+from PIL import Image, ImageColor, UnidentifiedImageError
 
 try:
     import colornames as _cn
@@ -587,3 +590,181 @@ class PaletteGeneratorService:
         # Base colors always appear first in the palette
         base_generated = [GeneratedColor(hex=h) for h in base_hexes]
         return PaletteGenerateResponse(colors=(base_generated + gen_colors)[:count])
+
+
+class PaletteImageService:
+    MAX_IMAGE_BYTES = 50 * 1024 * 1024  # 50 MB
+    MIN_COLOR_DISTANCE = 36.0
+
+    @staticmethod
+    def _rgb_distance(hex1: str, hex2: str) -> float:
+        r1, g1, b1 = ColorService._hex_to_rgb(hex1)
+        r2, g2, b2 = ColorService._hex_to_rgb(hex2)
+        return math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2)
+
+    @staticmethod
+    def _pick_with_minimum_distance(candidates: list[str], count: int) -> list[str]:
+        if count <= 0:
+            return []
+
+        selected: list[str] = []
+        deferred: list[str] = []
+
+        for hex_value in candidates:
+            if all(
+                PaletteImageService._rgb_distance(hex_value, chosen) >= PaletteImageService.MIN_COLOR_DISTANCE
+                for chosen in selected
+            ):
+                selected.append(hex_value)
+            else:
+                deferred.append(hex_value)
+
+            if len(selected) >= count:
+                return selected[:count]
+
+        # If we could not find enough distinct colors, keep the best remaining
+        # dominant candidates even if they are close to an already selected one.
+        for hex_value in deferred:
+            if hex_value in selected:
+                continue
+            selected.append(hex_value)
+            if len(selected) >= count:
+                break
+
+        return selected[:count]
+
+    @staticmethod
+    def extract_dominant_palette(image_bytes: bytes, count: int) -> PaletteGenerateResponse:
+        if count < 1 or count > 8:
+            raise ValueError("count must be between 1 and 8.")
+        if not image_bytes:
+            raise ValueError("Image file is empty.")
+        if len(image_bytes) > PaletteImageService.MAX_IMAGE_BYTES:
+            raise ValueError("Image is too large. Maximum size is 50MB.")
+
+        if PaletteImageService._looks_like_svg(image_bytes):
+            return PaletteImageService.extract_svg_palette(image_bytes, count)
+
+        try:
+            with Image.open(BytesIO(image_bytes)) as source:
+                rgba = source.convert("RGBA")
+        except UnidentifiedImageError:
+            raise ValueError("Invalid image file.")
+        except Exception as e:
+            raise ValueError(f"Could not read image: {str(e)}")
+
+        rgba.thumbnail((400, 400))
+        if rgba.width == 0 or rgba.height == 0:
+            raise ValueError("Image has invalid dimensions.")
+
+        # Ignore transparent / near-transparent pixels.
+        opaque_pixels = [
+            (r, g, b)
+            for (r, g, b, a) in rgba.getdata()
+            if a >= 75
+        ]
+        if not opaque_pixels:
+            raise ValueError("Image has no visible pixels (alpha >= 75).")
+
+        rgb_for_quantize = Image.new("RGB", (len(opaque_pixels), 1))
+        rgb_for_quantize.putdata(opaque_pixels)
+
+        quantized = rgb_for_quantize.quantize(colors=max(16, count * 5), method=Image.Quantize.MEDIANCUT)
+        palette_values = quantized.getpalette() or []
+        color_counts = quantized.getcolors(maxcolors=len(opaque_pixels)) or []
+
+        dominant_ranked: list[str] = []
+        seen: set[str] = set()
+
+        for occurrences, color_idx in sorted(color_counts, key=lambda item: item[0], reverse=True):
+            if occurrences <= 0:
+                continue
+            base = color_idx * 3
+            if base + 2 >= len(palette_values):
+                continue
+            r = int(palette_values[base])
+            g = int(palette_values[base + 1])
+            b = int(palette_values[base + 2])
+            hex_value = ColorService._rgb_to_hex(r, g, b)
+            if hex_value in seen:
+                continue
+            seen.add(hex_value)
+            dominant_ranked.append(hex_value)
+
+        if not dominant_ranked:
+            raise ValueError("No dominant colors could be extracted from this image.")
+
+        dominant = PaletteImageService._pick_with_minimum_distance(dominant_ranked, count)
+        return PaletteGenerateResponse(colors=[GeneratedColor(hex=h) for h in dominant])
+
+    @staticmethod
+    def _looks_like_svg(image_bytes: bytes) -> bool:
+        probe = image_bytes[:4096].lstrip().lower()
+        return b"<svg" in probe or probe.startswith(b"<?xml")
+
+    @staticmethod
+    def _normalize_svg_color(value: str) -> str | None:
+        raw = value.strip()
+        if not raw:
+            return None
+        lowered = raw.lower()
+        if lowered in {"none", "transparent", "currentcolor", "inherit", "initial", "unset"}:
+            return None
+        if lowered.startswith("url("):
+            return None
+        try:
+            parsed = ImageColor.getrgb(raw)
+        except Exception:
+            return None
+        if isinstance(parsed, tuple) and len(parsed) >= 3:
+            r, g, b = parsed[0], parsed[1], parsed[2]
+            return ColorService._rgb_to_hex(int(r), int(g), int(b))
+        return None
+
+    @staticmethod
+    def extract_svg_palette(svg_bytes: bytes, count: int) -> PaletteGenerateResponse:
+        try:
+            svg_text = svg_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                svg_text = svg_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                raise ValueError("Invalid SVG file.")
+
+        attr_pattern = re.compile(
+            r"\b(?:fill|stroke|stop-color|flood-color|lighting-color)\s*=\s*['\"]([^'\"]+)['\"]",
+            re.IGNORECASE,
+        )
+        style_attr_pattern = re.compile(r"\bstyle\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+        style_color_pattern = re.compile(
+            r"\b(?:fill|stroke|stop-color|flood-color|lighting-color)\s*:\s*([^;]+)",
+            re.IGNORECASE,
+        )
+
+        colors: list[str] = []
+        for match in attr_pattern.finditer(svg_text):
+            parsed = PaletteImageService._normalize_svg_color(match.group(1))
+            if parsed:
+                colors.append(parsed)
+
+        for match in style_attr_pattern.finditer(svg_text):
+            style_text = match.group(1)
+            for style_match in style_color_pattern.finditer(style_text):
+                parsed = PaletteImageService._normalize_svg_color(style_match.group(1))
+                if parsed:
+                    colors.append(parsed)
+
+        # Also parse colors inside <style> blocks for class-based SVG colors.
+        for style_match in re.finditer(r"<style[^>]*>(.*?)</style>", svg_text, re.IGNORECASE | re.DOTALL):
+            css = style_match.group(1)
+            for color_match in style_color_pattern.finditer(css):
+                parsed = PaletteImageService._normalize_svg_color(color_match.group(1))
+                if parsed:
+                    colors.append(parsed)
+
+        if not colors:
+            raise ValueError("No SVG colors could be extracted.")
+
+        ranked = [hex_value for hex_value, _ in Counter(colors).most_common()]
+        selected = PaletteImageService._pick_with_minimum_distance(ranked, count)
+        return PaletteGenerateResponse(colors=[GeneratedColor(hex=h) for h in selected])
