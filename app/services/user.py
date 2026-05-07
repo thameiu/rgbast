@@ -1,10 +1,14 @@
-from sqlmodel import select
+from sqlmodel import select, delete
+from sqlalchemy import func
 import difflib
 
 from app.models.user import User
-from app.schemas.user import UserCreate, UserGetResponse
+from app.models.folder import Folder
+from app.models.palette import Palette
+from app.schemas.user import UserCreate, UserGetResponse, UserUpdateMe
 from app.core.database import SessionDep
 from pwdlib import PasswordHash
+from app.services.palette import PaletteService
 
 
 class UserService:
@@ -31,6 +35,64 @@ class UserService:
             lastname=user.lastname,
             birthdate=user.birthdate,
         )
+
+    @staticmethod
+    def get_user_model_by_username(username: str, session: SessionDep) -> User | None:
+        return session.exec(select(User).where(User.username == username)).first()
+
+    @staticmethod
+    def get_user_model_by_email(email: str, session: SessionDep) -> User | None:
+        return session.exec(
+            select(User).where(func.lower(User.email) == email.strip().lower())
+        ).first()
+
+    @staticmethod
+    def update_me(user_id: int, update_schema: UserUpdateMe, session: SessionDep) -> tuple[User, bool]:
+        user = session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found.")
+
+        username_changed = False
+
+        if update_schema.username is not None:
+            next_username = update_schema.username.strip()
+            if not next_username:
+                raise ValueError("Username cannot be empty.")
+            if next_username != user.username:
+                existing = session.exec(select(User).where(User.username == next_username)).first()
+                if existing:
+                    raise ValueError("This username is already taken.")
+                user.username = next_username
+                username_changed = True
+
+        if update_schema.firstname is not None:
+            user.firstname = update_schema.firstname.strip() or None
+        if update_schema.lastname is not None:
+            user.lastname = update_schema.lastname.strip() or None
+
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user, username_changed
+
+    @staticmethod
+    def delete_me(user_id: int, session: SessionDep) -> None:
+        user = session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found.")
+
+        palette_ids = session.exec(
+            select(Palette.id).where(Palette.user_id == user_id)
+        ).all()
+        for palette_id in palette_ids:
+            PaletteService.delete_palette(palette_id, user_id, session)
+
+        folder_ids = session.exec(select(Folder.id).where(Folder.user_id == user_id)).all()
+        if folder_ids:
+            session.exec(delete(Folder).where(Folder.id.in_(folder_ids)))
+
+        session.delete(user)
+        session.commit()
 
     def search_users(query: str, session: SessionDep, limit: int = 100):
         needle = query.strip().lower()

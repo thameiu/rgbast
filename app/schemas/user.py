@@ -41,6 +41,7 @@ class UserCreateResponse(SQLModel):
     firstname: str | None
     lastname: str | None
     birthdate: datetime | None = None
+    email_verification_required: bool = True
 
 
 class UserGetResponse(SQLModel):
@@ -49,3 +50,32 @@ class UserGetResponse(SQLModel):
     firstname: str | None
     lastname: str | None
     birthdate: datetime | None = None
+
+
+class UserUpdateMe(SQLModel):
+    username: str | None = Field(default=None, max_length=50)
+    firstname: str | None = Field(default=None, max_length=50)
+    lastname: str | None = Field(default=None, max_length=50)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username_user_update(cls, username: str | None) -> str | None:
+        if username is None:
+            return None
+        pattern = r"^[a-zA-Z0-9._-]+$"
+        if not re.match(pattern, username):
+            raise ValueError("Username is invalid.")
+        return username
+
+
+class UserUpdateMeResponse(SQLModel):
+    id: int
+    username: str
+    firstname: str | None
+    lastname: str | None
+    birthdate: datetime | None = None
+    access_token: str | None = None
+
+
+class UserDeleteMeResponse(SQLModel):
+    response: str

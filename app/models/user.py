@@ -11,6 +11,12 @@ class User(SQLModel, table=True):
     lastname: str | None = Field(default=None, nullable=True)
     password: str = Field(default=None)
     birthdate: datetime | None = Field(default=None, nullable=True)
+    is_email_verified: bool = Field(default=False, nullable=False)
+    email_verified_at: datetime | None = Field(
+        sa_type=TIMESTAMP(timezone=True),
+        default=None,
+        nullable=True,
+    )
     created_at: datetime = Field(
         sa_type=TIMESTAMP(timezone=True),
         sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP")},

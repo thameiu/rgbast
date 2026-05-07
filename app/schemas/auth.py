@@ -1,8 +1,9 @@
 from sqlmodel import SQLModel
+from pydantic import EmailStr
 
 
 class Login(SQLModel):
-    username: str | None
+    username: str
     password: str
 
 
@@ -12,3 +13,16 @@ class LoginResponse(SQLModel):
     firstname: str | None
     lastname: str | None
     email: str
+
+
+class PasswordResetRequest(SQLModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(SQLModel):
+    token: str
+    password: str
+
+
+class MessageResponse(SQLModel):
+    response: str
