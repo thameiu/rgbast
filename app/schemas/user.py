@@ -46,7 +46,6 @@ class UserCreateResponse(SQLModel):
 class UserGetResponse(SQLModel):
     id: int
     username: str
-    email: str
     firstname: str | None
     lastname: str | None
     birthdate: datetime | None = None

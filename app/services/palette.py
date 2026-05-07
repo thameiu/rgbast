@@ -1,6 +1,7 @@
 from datetime import timezone, datetime
 from collections import defaultdict
 from sqlmodel import delete, desc, select
+from sqlalchemy import exists, func
 import difflib
 import re
 
@@ -15,10 +16,47 @@ from app.models.palette import (
 )
 from app.models.user import User
 from app.schemas.palette import PaletteCreate, PaletteSnapshotSave, PaletteUpdate
+from app.services.color import ColorService
 from app.utils.lexicographic_ranker import LexicographicRanker
+
+try:
+    import colornames as _cn
+    _CN_AVAILABLE = True
+except ImportError:
+    _cn = None  # type: ignore
+    _CN_AVAILABLE = False
 
 
 class PaletteService:
+    @staticmethod
+    def _normalize_search_hex(hex_value: str) -> str:
+        value = (hex_value or "").strip().lstrip("#")
+        if not value:
+            raise ValueError("Color filters cannot be empty.")
+        if not re.match(r"^[0-9a-fA-F]{6}$", value):
+            raise ValueError(f"Invalid color filter: {hex_value}")
+        return value.upper()
+
+    @staticmethod
+    def _similar_label_bucket(label: str | None) -> set[str]:
+        if not label:
+            return set()
+        base = label.strip().lower()
+        bucket = {base}
+        if not _CN_AVAILABLE:
+            return bucket
+        try:
+            dominant = base.split()[-1]
+            for name in _cn._colors.keys():  # type: ignore[attr-defined]
+                lowered = str(name).strip().lower()
+                if dominant in lowered:
+                    bucket.add(lowered)
+                if len(bucket) >= 240:
+                    break
+        except Exception:
+            return {base}
+        return bucket
+
     @staticmethod
     def _assert_palette_name(title: str) -> None:
         pattern = r"^[a-zA-Z0-9._-]+$"
@@ -271,6 +309,140 @@ class PaletteService:
             )
 
         return {"username": username, "palettes": result}
+
+    @staticmethod
+    def search_palettes(
+        session: SessionDep,
+        title_query: str | None = None,
+        colors: list[str] | None = None,
+        color_mode: str = "exact",
+        limit: int = 100,
+    ):
+        normalized_title = (title_query or "").strip().lower()
+        normalized_colors = [PaletteService._normalize_search_hex(c) for c in (colors or [])]
+
+        if color_mode not in {"exact", "similar"}:
+            raise ValueError("color_mode must be 'exact' or 'similar'.")
+        if not normalized_title and not normalized_colors:
+            return []
+
+        latest_main_snapshot_sq = (
+            select(
+                Palette_Snapshot.palette_id.label("palette_id"),
+                func.max(Palette_Snapshot.id).label("latest_snapshot_id"),
+            )
+            .where(Palette_Snapshot.branch_id.is_(None))
+            .group_by(Palette_Snapshot.palette_id)
+            .subquery()
+        )
+
+        query = (
+            select(Palette, latest_main_snapshot_sq.c.latest_snapshot_id, User.username)
+            .join(
+                latest_main_snapshot_sq,
+                Palette.id == latest_main_snapshot_sq.c.palette_id,
+            )
+            .join(User, User.id == Palette.user_id)
+            .order_by(desc(Palette.created_at), desc(Palette.id))
+        )
+        if normalized_title:
+            query = query.where(Palette.title.ilike(f"%{normalized_title}%"))
+
+        color_labels: list[str | None] = []
+        color_label_buckets: list[set[str]] = []
+        query_rgbs: list[tuple[int, int, int]] = []
+        if color_mode == "similar":
+            for hex_value in normalized_colors:
+                r, g, b = ColorService._hex_to_rgb(hex_value)
+                query_rgbs.append((r, g, b))
+                label = ColorService._closest_name(hex_value, r, g, b)
+                color_labels.append(label)
+                color_label_buckets.append(PaletteService._similar_label_bucket(label))
+
+        if normalized_colors and color_mode == "exact":
+            for hex_value in normalized_colors:
+                color_exists_sq = (
+                    select(Palette_Color.id)
+                    .where(
+                        Palette_Color.palette_snapshot_id
+                        == latest_main_snapshot_sq.c.latest_snapshot_id,
+                        func.upper(Palette_Color.hex) == hex_value,
+                    )
+                    .limit(1)
+                )
+                query = query.where(exists(color_exists_sq))
+        elif normalized_colors and color_mode == "similar":
+            for bucket in color_label_buckets:
+                if not bucket:
+                    continue
+                label_exists_sq = (
+                    select(Palette_Color.id)
+                    .where(
+                        Palette_Color.palette_snapshot_id
+                        == latest_main_snapshot_sq.c.latest_snapshot_id,
+                        func.lower(Palette_Color.label).in_(bucket),
+                    )
+                    .limit(1)
+                )
+                query = query.where(exists(label_exists_sq))
+
+        candidate_limit = max(limit * 4, 200)
+        palette_rows = session.exec(query.limit(candidate_limit)).all()
+        if not palette_rows:
+            return []
+
+        snapshot_ids = [int(row[1]) for row in palette_rows]
+        colors_rows = session.exec(
+            select(Palette_Color)
+            .where(Palette_Color.palette_snapshot_id.in_(snapshot_ids))
+            .order_by(Palette_Color.position_key)
+        ).all()
+        colors_by_snapshot: dict[int, list[Palette_Color]] = defaultdict(list)
+        for color_row in colors_rows:
+            colors_by_snapshot[color_row.palette_snapshot_id].append(color_row)
+
+        snapshots = session.exec(
+            select(Palette_Snapshot).where(Palette_Snapshot.id.in_(snapshot_ids))
+        ).all()
+        snapshot_by_id = {snapshot.id: snapshot for snapshot in snapshots}
+
+        matched: list[dict] = []
+        for palette, latest_snapshot_id, owner_username in palette_rows:
+            latest_snapshot = snapshot_by_id.get(int(latest_snapshot_id))
+            if not latest_snapshot:
+                continue
+            latest_colors = colors_by_snapshot.get(int(latest_snapshot_id), [])
+
+            if normalized_colors and color_mode == "similar" and any(label is None for label in color_labels):
+                palette_rgbs = [ColorService._hex_to_rgb(c.hex) for c in latest_colors]
+
+                def _is_close(qr: tuple[int, int, int]) -> bool:
+                    return any(
+                        ((pr - qr[0]) ** 2 + (pg - qr[1]) ** 2 + (pb - qr[2]) ** 2) ** 0.5 <= 68
+                        for pr, pg, pb in palette_rgbs
+                    )
+
+                if not all(_is_close(qrgb) for qrgb in query_rgbs):
+                    continue
+
+            matched.append(
+                {
+                    "id": palette.id,
+                    "owner_username": owner_username,
+                    "title": palette.title,
+                    "description": palette.description,
+                    "folder_path": PaletteService._get_folder_path(palette.folder_id, session),
+                    "created_at": palette.created_at,
+                    "latest_main_snapshot_created_at": latest_snapshot.created_at,
+                    "palette_colors": [
+                        {"hex": c.hex, "label": c.label} for c in latest_colors
+                    ],
+                }
+            )
+            if len(matched) >= limit:
+                break
+
+        return matched
 
     # Reconstructs the active color list for a specific snapshot by resolving past changes.
     def get_snapshot_state(
@@ -913,7 +1085,7 @@ class PaletteService:
             select(Palette_Snapshot)
             .where(
                 Palette_Snapshot.palette_id == palette_id,
-                Palette_Snapshot.branch_id == None,
+                Palette_Snapshot.branch_id.is_(None),
             )
             .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
         ).all()

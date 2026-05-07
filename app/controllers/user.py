@@ -40,4 +40,13 @@ class UserController:
             )
 
     def get_user_from_username_control(username: str, session: SessionDep):
-        return UserService.get_user_from_username(username, session)
+        return UserController.get_user_or_404_control(username, session)
+
+    def get_user_or_404_control(username: str, session: SessionDep):
+        user = UserService.get_user_from_username(username, session)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        return user
