@@ -8,6 +8,8 @@ from app.schemas.auth import (
     MessageResponse,
     PasswordResetConfirm,
     PasswordResetRequest,
+    VerifyEmailCodeRequest,
+    VerifyEmailResendRequest,
 )
 from app.core.database import SessionDep
 
@@ -96,6 +98,47 @@ class AuthController:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(e),
+            )
+
+    @staticmethod
+    def verify_email_code_control(payload: VerifyEmailCodeRequest, session: SessionDep) -> LoginResponse:
+        try:
+            user = AuthService.verify_email_with_code(payload.email, payload.code, session)
+            access_token = AuthService.create_access_token_for_user(user)
+            return LoginResponse(
+                access_token=access_token,
+                username=user.username,
+                firstname=user.firstname,
+                lastname=user.lastname,
+                email=user.email,
+            )
+        except ValueError as e:
+            message = str(e)
+            code = status.HTTP_400_BAD_REQUEST
+            if "not found" in message.lower():
+                code = status.HTTP_404_NOT_FOUND
+            raise HTTPException(
+                status_code=code,
+                detail=message,
+            )
+
+    @staticmethod
+    def resend_verification_email_control(
+        payload: VerifyEmailResendRequest,
+        session: SessionDep,
+    ) -> MessageResponse:
+        try:
+            AuthService.resend_verification_email(payload.identifier, session)
+            return MessageResponse(
+                response=(
+                    "If this account exists and is not yet verified, a new verification email has been sent."
+                )
+            )
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred. " + str(e),
             )
 
     @staticmethod

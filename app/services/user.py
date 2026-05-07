@@ -5,15 +5,17 @@ import difflib
 from app.models.user import User
 from app.models.folder import Folder
 from app.models.palette import Palette
+from app.models.colleague import Colleague
 from app.schemas.user import UserCreate, UserGetResponse, UserUpdateMe
 from app.core.database import SessionDep
 from pwdlib import PasswordHash
 from app.services.palette import PaletteService
+from app.services.colleague import ColleagueService
 
 
 class UserService:
     def create_user(userSchema: UserCreate, session: SessionDep):
-        newUser = User(**userSchema.model_dump())
+        newUser = User(**userSchema.model_dump(exclude={"verify_type"}))
 
         hasher = PasswordHash.recommended()
         newUser.password = hasher.hash(newUser.password)
@@ -28,12 +30,14 @@ class UserService:
         user = session.exec(query).first()
         if user is None:
             return None
+        colleagues_count = ColleagueService.count_colleagues(user.id, session)
         return UserGetResponse(
             id=user.id,
             username=user.username,
             firstname=user.firstname,
             lastname=user.lastname,
             birthdate=user.birthdate,
+            colleagues_count=colleagues_count,
         )
 
     @staticmethod
@@ -90,6 +94,13 @@ class UserService:
         folder_ids = session.exec(select(Folder.id).where(Folder.user_id == user_id)).all()
         if folder_ids:
             session.exec(delete(Folder).where(Folder.id.in_(folder_ids)))
+
+        session.exec(
+            delete(Colleague).where(
+                (Colleague.from_user_id == user_id)
+                | (Colleague.to_user_id == user_id)
+            )
+        )
 
         session.delete(user)
         session.commit()

@@ -26,3 +26,12 @@ class PasswordResetConfirm(SQLModel):
 
 class MessageResponse(SQLModel):
     response: str
+
+
+class VerifyEmailCodeRequest(SQLModel):
+    email: EmailStr
+    code: str
+
+
+class VerifyEmailResendRequest(SQLModel):
+    identifier: str

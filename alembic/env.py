@@ -16,6 +16,8 @@ from app.models.palette import (  # noqa: F401
     Palette_Color,
     Palette_Snapshot,
 )
+from app.models.folder import Folder  # noqa: F401
+from app.models.colleague import Colleague  # noqa: F401
 from sqlmodel import SQLModel
 
 config = context.config

@@ -17,6 +17,12 @@ class User(SQLModel, table=True):
         default=None,
         nullable=True,
     )
+    email_verify_code_hash: str | None = Field(default=None, nullable=True, max_length=128)
+    email_verify_code_expires_at: datetime | None = Field(
+        sa_type=TIMESTAMP(timezone=True),
+        default=None,
+        nullable=True,
+    )
     created_at: datetime = Field(
         sa_type=TIMESTAMP(timezone=True),
         sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP")},

@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
 import os
+import re
+import secrets
 from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
@@ -11,13 +14,14 @@ from app.schemas.auth import Login, LoginResponse
 from app.core.database import SessionDep
 from pwdlib import PasswordHash
 
-from app.schemas.user import UserUtils
+from app.schemas.user import UserMeResponse, UserUtils
 from app.services.mail import MailService
 from app.services.user import UserService
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 60
 VERIFY_TOKEN_EXPIRE_HOURS = 48
+VERIFY_CODE_EXPIRE_MINUTES = 20
 RESET_TOKEN_EXPIRE_MINUTES = 30
 
 
@@ -62,6 +66,19 @@ class AuthService:
     def _build_reset_url(token: str) -> str:
         return f"{AuthService._get_frontend_url()}/reset-password?token={quote_plus(token)}"
 
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        return email.strip().lower()
+
+    @staticmethod
+    def _create_email_verify_code() -> str:
+        return f"{secrets.randbelow(1_000_000):06d}"
+
+    @staticmethod
+    def _hash_email_verify_code(user: User, code: str) -> str:
+        payload = f"{user.id}:{AuthService._normalize_email(user.email)}:{code}:{AuthService._get_secret_key()}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def login(loginSchema: Login, session: SessionDep) -> LoginResponse:
         hasher = PasswordHash.recommended()
         if "@" in loginSchema.username:
@@ -89,7 +106,7 @@ class AuthService:
         return None
 
     @staticmethod
-    def send_verification_email(user: User) -> bool:
+    def send_verification_link_email(user: User) -> bool:
         token = AuthService._create_scoped_token(
             subject=user.username,
             token_type="email_verify",
@@ -110,6 +127,40 @@ class AuthService:
             "<p>If you did not create an account, you can ignore this email.</p>"
         )
         return MailService.send_email(user.email, subject, text_body, html_body)
+
+    @staticmethod
+    def send_verification_code_email(user: User, session: SessionDep) -> bool:
+        code = AuthService._create_email_verify_code()
+        user.email_verify_code_hash = AuthService._hash_email_verify_code(user, code)
+        user.email_verify_code_expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=VERIFY_CODE_EXPIRE_MINUTES
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        subject = "Your RGBAST verification code"
+        text_body = (
+            f"Hi {user.username},\n\n"
+            "Use this verification code to activate your RGBAST account:\n"
+            f"{code}\n\n"
+            f"The code expires in {VERIFY_CODE_EXPIRE_MINUTES} minutes.\n"
+            "If you did not create an account, you can ignore this email."
+        )
+        html_body = (
+            f"<p>Hi {user.username},</p>"
+            "<p>Use this verification code to activate your RGBAST account:</p>"
+            f"<p><strong style=\"font-size:20px;letter-spacing:0.15em;\">{code}</strong></p>"
+            f"<p>The code expires in {VERIFY_CODE_EXPIRE_MINUTES} minutes.</p>"
+            "<p>If you did not create an account, you can ignore this email.</p>"
+        )
+        return MailService.send_email(user.email, subject, text_body, html_body)
+
+    @staticmethod
+    def send_verification_email(user: User, session: SessionDep, verify_type: str = "link") -> bool:
+        if verify_type == "code":
+            return AuthService.send_verification_code_email(user, session)
+        return AuthService.send_verification_link_email(user)
 
     @staticmethod
     def send_password_reset_email(user: User) -> bool:
@@ -144,10 +195,64 @@ class AuthService:
         if not user.is_email_verified:
             user.is_email_verified = True
             user.email_verified_at = datetime.now(timezone.utc)
+            user.email_verify_code_hash = None
+            user.email_verify_code_expires_at = None
             session.add(user)
             session.commit()
             session.refresh(user)
         return user
+
+    @staticmethod
+    def verify_email_with_code(email: str, code: str, session: SessionDep) -> User:
+        normalized_email = AuthService._normalize_email(email)
+        normalized_code = code.strip()
+        if not re.fullmatch(r"\d{6}", normalized_code):
+            raise ValueError("Invalid verification code.")
+
+        user = UserService.get_user_model_by_email(normalized_email, session)
+        if user is None:
+            raise ValueError("User not found.")
+        if user.is_email_verified:
+            return user
+        if not user.email_verify_code_hash or not user.email_verify_code_expires_at:
+            raise ValueError("No active verification code.")
+
+        now = datetime.now(timezone.utc)
+        expires_at = user.email_verify_code_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < now:
+            raise ValueError("Verification code has expired.")
+
+        incoming_hash = AuthService._hash_email_verify_code(user, normalized_code)
+        if incoming_hash != user.email_verify_code_hash:
+            raise ValueError("Invalid verification code.")
+
+        user.is_email_verified = True
+        user.email_verified_at = now
+        user.email_verify_code_hash = None
+        user.email_verify_code_expires_at = None
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+    @staticmethod
+    def resend_verification_email(identifier: str, session: SessionDep) -> bool:
+        raw = identifier.strip()
+        if not raw:
+            return False
+
+        user: User | None
+        if "@" in raw:
+            user = UserService.get_user_model_by_email(raw, session)
+        else:
+            user = UserService.get_user_model_by_username(raw, session)
+
+        if user is None or user.is_email_verified:
+            return False
+
+        return AuthService.send_verification_link_email(user)
 
     @staticmethod
     def create_access_token_for_user(user: User) -> str:
@@ -181,7 +286,17 @@ class AuthService:
     def check_auth(token: str, session: SessionDep):
         secret_key = AuthService._get_secret_key()
         decoded_token = jwt.decode(jwt=token, key=secret_key, algorithms=[ALGORITHM])
-        return UserService.get_user_from_username(decoded_token.get("sub"), session)
+        username = decoded_token.get("sub")
+        user = UserService.get_user_model_by_username(username, session)
+        if user is None:
+            return None
+        public_user = UserService.get_user_from_username(user.username, session)
+        if public_user is None:
+            return None
+        return UserMeResponse(
+            **public_user.model_dump(),
+            email=user.email,
+        )
 
     def create_access_token(data: dict, expires_delta: timedelta | None = None):
         to_encode = data.copy()

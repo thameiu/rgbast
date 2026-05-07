@@ -13,7 +13,10 @@ from app.schemas.auth import (
     MessageResponse,
     PasswordResetConfirm,
     PasswordResetRequest,
+    VerifyEmailCodeRequest,
+    VerifyEmailResendRequest,
 )
+from app.schemas.user import UserMeResponse
 
 router = APIRouter()
 security = HTTPBearer()
@@ -24,7 +27,7 @@ def login_handler(login: Login, session: SessionDep):
     return AuthController.login_control(login, session)
 
 
-@router.post("/check-auth", status_code=200)
+@router.post("/check-auth", response_model=UserMeResponse, status_code=200)
 def check_auth_handler(
     session: SessionDep,
     credentials: HTTPAuthorizationCredentials = Depends(security),  # Inject it here
@@ -51,6 +54,16 @@ def verify_email_handler(session: SessionDep, token: str = Query(...)):
             reason = "expired"
         redirect_to = f"{frontend_url}/login?verified={reason}"
     return RedirectResponse(url=redirect_to, status_code=302)
+
+
+@router.post("/verify-email/code", response_model=LoginResponse, status_code=200)
+def verify_email_code_handler(payload: VerifyEmailCodeRequest, session: SessionDep):
+    return AuthController.verify_email_code_control(payload, session)
+
+
+@router.post("/verify-email/resend", response_model=MessageResponse, status_code=200)
+def resend_verify_email_handler(payload: VerifyEmailResendRequest, session: SessionDep):
+    return AuthController.resend_verification_email_control(payload, session)
 
 
 @router.post(

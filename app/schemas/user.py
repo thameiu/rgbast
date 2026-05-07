@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from sqlmodel import Field, SQLModel
 from pydantic import EmailStr, field_validator
 import re
@@ -17,6 +18,7 @@ class UserCreate(SQLModel):
     lastname: str | None = Field(default=None, max_length=50)
     password: str
     birthdate: datetime | None
+    verify_type: Literal["link", "code"] = "link"
 
     @field_validator("username")
     @classmethod
@@ -50,6 +52,11 @@ class UserGetResponse(SQLModel):
     firstname: str | None
     lastname: str | None
     birthdate: datetime | None = None
+    colleagues_count: int = 0
+
+
+class UserMeResponse(UserGetResponse):
+    email: EmailStr
 
 
 class UserUpdateMe(SQLModel):

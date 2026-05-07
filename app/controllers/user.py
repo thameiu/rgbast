@@ -17,7 +17,11 @@ class UserController:
     def create_user_control(userSchema: UserCreate, session: SessionDep):
         try:
             created_user = UserService.create_user(userSchema, session)
-            sent = AuthService.send_verification_email(created_user)
+            sent = AuthService.send_verification_email(
+                created_user,
+                session,
+                userSchema.verify_type,
+            )
             if not sent:
                 raise RuntimeError("Could not send verification email. Check SMTP configuration.")
             return UserCreateResponse(
