@@ -1,7 +1,6 @@
 from datetime import timezone, datetime
 from collections import defaultdict
 from sqlmodel import delete, desc, select
-from sqlalchemy import exists, func
 import difflib
 import re
 
@@ -326,103 +325,72 @@ class PaletteService:
         if not normalized_title and not normalized_colors:
             return []
 
-        latest_main_snapshot_sq = (
-            select(
-                Palette_Snapshot.palette_id.label("palette_id"),
-                func.max(Palette_Snapshot.id).label("latest_snapshot_id"),
-            )
-            .where(Palette_Snapshot.branch_id.is_(None))
-            .group_by(Palette_Snapshot.palette_id)
-            .subquery()
-        )
-
         query = (
-            select(Palette, latest_main_snapshot_sq.c.latest_snapshot_id, User.username)
-            .join(
-                latest_main_snapshot_sq,
-                Palette.id == latest_main_snapshot_sq.c.palette_id,
-            )
+            select(Palette, User.username)
             .join(User, User.id == Palette.user_id)
             .order_by(desc(Palette.created_at), desc(Palette.id))
         )
         if normalized_title:
             query = query.where(Palette.title.ilike(f"%{normalized_title}%"))
 
-        color_labels: list[str | None] = []
-        color_label_buckets: list[set[str]] = []
-        query_rgbs: list[tuple[int, int, int]] = []
+        query_similarity_targets: list[dict] = []
         if color_mode == "similar":
             for hex_value in normalized_colors:
                 r, g, b = ColorService._hex_to_rgb(hex_value)
-                query_rgbs.append((r, g, b))
                 label = ColorService._closest_name(hex_value, r, g, b)
-                color_labels.append(label)
-                color_label_buckets.append(PaletteService._similar_label_bucket(label))
-
-        if normalized_colors and color_mode == "exact":
-            for hex_value in normalized_colors:
-                color_exists_sq = (
-                    select(Palette_Color.id)
-                    .where(
-                        Palette_Color.palette_snapshot_id
-                        == latest_main_snapshot_sq.c.latest_snapshot_id,
-                        func.upper(Palette_Color.hex) == hex_value,
-                    )
-                    .limit(1)
+                query_similarity_targets.append(
+                    {
+                        "rgb": (r, g, b),
+                        "bucket": PaletteService._similar_label_bucket(label),
+                    }
                 )
-                query = query.where(exists(color_exists_sq))
-        elif normalized_colors and color_mode == "similar":
-            for bucket in color_label_buckets:
-                if not bucket:
-                    continue
-                label_exists_sq = (
-                    select(Palette_Color.id)
-                    .where(
-                        Palette_Color.palette_snapshot_id
-                        == latest_main_snapshot_sq.c.latest_snapshot_id,
-                        func.lower(Palette_Color.label).in_(bucket),
-                    )
-                    .limit(1)
-                )
-                query = query.where(exists(label_exists_sq))
 
         candidate_limit = max(limit * 4, 200)
         palette_rows = session.exec(query.limit(candidate_limit)).all()
         if not palette_rows:
             return []
 
-        snapshot_ids = [int(row[1]) for row in palette_rows]
-        colors_rows = session.exec(
-            select(Palette_Color)
-            .where(Palette_Color.palette_snapshot_id.in_(snapshot_ids))
-            .order_by(Palette_Color.position_key)
-        ).all()
-        colors_by_snapshot: dict[int, list[Palette_Color]] = defaultdict(list)
-        for color_row in colors_rows:
-            colors_by_snapshot[color_row.palette_snapshot_id].append(color_row)
-
-        snapshots = session.exec(
-            select(Palette_Snapshot).where(Palette_Snapshot.id.in_(snapshot_ids))
-        ).all()
-        snapshot_by_id = {snapshot.id: snapshot for snapshot in snapshots}
-
         matched: list[dict] = []
-        for palette, latest_snapshot_id, owner_username in palette_rows:
-            latest_snapshot = snapshot_by_id.get(int(latest_snapshot_id))
+        for palette, owner_username in palette_rows:
+            latest_snapshot, latest_colors_objs = PaletteService.get_latest_palette_snapshot(
+                palette.id,
+                session,
+                branch_id=None,
+            )
             if not latest_snapshot:
                 continue
-            latest_colors = colors_by_snapshot.get(int(latest_snapshot_id), [])
+            latest_colors = [{"hex": c.hex, "label": c.label} for c in latest_colors_objs]
+            palette_hexes = {c.hex.upper() for c in latest_colors_objs}
 
-            if normalized_colors and color_mode == "similar" and any(label is None for label in color_labels):
-                palette_rgbs = [ColorService._hex_to_rgb(c.hex) for c in latest_colors]
+            if normalized_colors and color_mode == "exact":
+                if not all(hex_value in palette_hexes for hex_value in normalized_colors):
+                    continue
 
-                def _is_close(qr: tuple[int, int, int]) -> bool:
+            if normalized_colors and color_mode == "similar":
+                palette_rgbs = [ColorService._hex_to_rgb(c.hex) for c in latest_colors_objs]
+                palette_labels = [(c.label or "").strip().lower() for c in latest_colors_objs]
+
+                def _close_enough(target_rgb: tuple[int, int, int]) -> bool:
                     return any(
-                        ((pr - qr[0]) ** 2 + (pg - qr[1]) ** 2 + (pb - qr[2]) ** 2) ** 0.5 <= 68
+                        ((pr - target_rgb[0]) ** 2 + (pg - target_rgb[1]) ** 2 + (pb - target_rgb[2]) ** 2) ** 0.5 <= 68
                         for pr, pg, pb in palette_rgbs
                     )
 
-                if not all(_is_close(qrgb) for qrgb in query_rgbs):
+                def _label_match(bucket: set[str]) -> bool:
+                    if not bucket:
+                        return False
+                    return any(label in bucket for label in palette_labels if label)
+
+                target_ok = True
+                for target in query_similarity_targets:
+                    if _label_match(target["bucket"]):
+                        continue
+                    if _close_enough(target["rgb"]):
+                        continue
+                    target_ok = False
+                    break
+
+                if not target_ok:
                     continue
 
             matched.append(
@@ -434,9 +402,7 @@ class PaletteService:
                     "folder_path": PaletteService._get_folder_path(palette.folder_id, session),
                     "created_at": palette.created_at,
                     "latest_main_snapshot_created_at": latest_snapshot.created_at,
-                    "palette_colors": [
-                        {"hex": c.hex, "label": c.label} for c in latest_colors
-                    ],
+                    "palette_colors": latest_colors,
                 }
             )
             if len(matched) >= limit:
