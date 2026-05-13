@@ -1,10 +1,17 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from typing import Literal
 
 from app.controllers.folder import FolderController
 from app.core.database import SessionDep
 from app.middlewares.auth import verify_token
 from app.models.user import User
-from app.schemas.folder import FolderCreate, FolderCreateResponse, FolderResponse, FolderUpdate
+from app.schemas.folder import (
+    FolderCreate,
+    FolderCreateResponse,
+    FolderDeleteResponse,
+    FolderResponse,
+    FolderUpdate,
+)
 
 router = APIRouter()
 
@@ -35,10 +42,16 @@ def update_folder_handler(
     )
 
 
-@router.delete("/folders/{folder_id}", status_code=200)
+@router.delete("/folders/{folder_id}", response_model=FolderDeleteResponse, status_code=200)
 def delete_folder_handler(
     folder_id: int,
     session: SessionDep,
     current_user: User = Depends(verify_token),
+    palette_strategy: Literal["move_root", "delete"] = Query(default="move_root"),
 ):
-    return FolderController.delete_folder_control(folder_id, current_user.id, session)
+    return FolderController.delete_folder_control(
+        folder_id,
+        current_user.id,
+        palette_strategy,
+        session,
+    )

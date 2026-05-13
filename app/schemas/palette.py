@@ -31,6 +31,13 @@ class PaletteCreate(SQLModel):
                 raise ValueError("Folder path is invalid.")
         return folder_path
 
+    @field_validator("palette_colors")
+    @classmethod
+    def validate_palette_colors_create(cls, palette_colors: list["PaletteColorSave"]) -> list["PaletteColorSave"]:
+        if len(palette_colors) > 15:
+            raise ValueError("Palette cannot contain more than 15 colors.")
+        return palette_colors
+
 
 class PaletteCreateResponse(SQLModel):
     id: int
@@ -74,6 +81,13 @@ class PaletteSnapshotSave(SQLModel):
     branch_title: str | None = Field(default=None, max_length=100)
     palette_colors: list[PaletteColorSave] = Field(default=[])
     comment: str = Field(max_length=500)
+
+    @field_validator("palette_colors")
+    @classmethod
+    def validate_palette_colors_snapshot(cls, palette_colors: list[PaletteColorSave]) -> list[PaletteColorSave]:
+        if len(palette_colors) > 15:
+            raise ValueError("Palette cannot contain more than 15 colors.")
+        return palette_colors
 
 
 class PaletteSnapshotSaveResponse(SQLModel):

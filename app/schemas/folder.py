@@ -47,3 +47,11 @@ class FolderResponse(SQLModel):
     parent_folder_id: int | None
     name: str
     created_at: datetime
+
+
+class FolderDeleteResponse(SQLModel):
+    folder_id: int
+    palette_strategy: str
+    deleted_folder_ids: list[int] = Field(default=[])
+    deleted_palette_ids: list[int] = Field(default=[])
+    moved_palette_ids: list[int] = Field(default=[])

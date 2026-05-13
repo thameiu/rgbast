@@ -1,8 +1,15 @@
 from fastapi import HTTPException, status
 from pydantic import ValidationError
+from typing import Literal
 
 from app.core.database import SessionDep
-from app.schemas.folder import FolderCreate, FolderCreateResponse, FolderResponse, FolderUpdate
+from app.schemas.folder import (
+    FolderCreate,
+    FolderCreateResponse,
+    FolderDeleteResponse,
+    FolderResponse,
+    FolderUpdate,
+)
 from app.services.folder import FolderService
 
 
@@ -70,11 +77,12 @@ class FolderController:
     def delete_folder_control(
         folder_id: int,
         user_id: int,
+        palette_strategy: Literal["move_root", "delete"],
         session: SessionDep,
-    ) -> dict:
+    ) -> FolderDeleteResponse:
         try:
-            FolderService.delete_folder(folder_id, user_id, session)
-            return {"folder_id": folder_id}
+            result = FolderService.delete_folder(folder_id, user_id, palette_strategy, session)
+            return FolderDeleteResponse(**result)
         except PermissionError as e:
             session.rollback()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
