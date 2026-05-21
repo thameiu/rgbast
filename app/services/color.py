@@ -24,6 +24,8 @@ from app.schemas.color import (
     ColorHSB,
     ColorHWB,
     ColorInfoResponse,
+    ColorLabelItemResponse,
+    ColorLabelsResponse,
     ColorLAB,
     ColorLCH,
     ColorLUV,
@@ -115,6 +117,33 @@ class ColorService:
             aaa_normal=ratio >= 7.0,
             aaa_large=ratio >= 4.5,
         )
+
+    @staticmethod
+    def get_color_labels(hex_values: list[str]) -> ColorLabelsResponse:
+        labels: list[ColorLabelItemResponse] = []
+        for hex_value in hex_values:
+            normalized_hex = ColorService._normalize_hex(hex_value)
+            r, g, b = ColorService._hex_to_rgb(normalized_hex)
+            closest_name = ColorService._closest_name(normalized_hex, r, g, b)
+
+            label_is_approximate = False
+            if closest_name and _CN_AVAILABLE:
+                try:
+                    nr, ng, nb = _cn._colors[closest_name]
+                    label_is_approximate = not (nr == r and ng == g and nb == b)
+                except Exception:
+                    label_is_approximate = True
+
+            labels.append(
+                ColorLabelItemResponse(
+                    input_hex=hex_value,
+                    normalized_hex=normalized_hex,
+                    closest_name=closest_name,
+                    label_is_approximate=label_is_approximate,
+                )
+            )
+
+        return ColorLabelsResponse(labels=labels)
 
     @staticmethod
     def _normalize_hex(hex_value: str) -> str:

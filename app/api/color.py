@@ -1,8 +1,14 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.datastructures import UploadFile
 
 from app.controllers.color import ColorController
-from app.schemas.color import ColorContrastCheckResponse, ColorInfoResponse, PaletteGenerateRequest, PaletteGenerateResponse
+from app.schemas.color import (
+    ColorContrastCheckResponse,
+    ColorInfoResponse,
+    ColorLabelsResponse,
+    PaletteGenerateRequest,
+    PaletteGenerateResponse,
+)
 
 router = APIRouter()
 IMAGE_PALETTE_MAX_BYTES = 10 * 1024 * 1024
@@ -62,6 +68,23 @@ async def generate_palette_from_image_handler(
 @router.get("/color/{hex}/contrast/{hex2}", response_model=ColorContrastCheckResponse, status_code=200)
 def get_contrast_check_handler(hex: str, hex2: str):
     return ColorController.get_contrast_check_control(hex, hex2)
+
+
+@router.get("/color/labels", response_model=ColorLabelsResponse, status_code=200)
+def get_color_labels_handler(
+    hex: list[str] = Query(default_factory=list, description="List of hex colors with or without #"),
+):
+    if not hex:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one hex value is required.",
+        )
+    if len(hex) > 64:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A maximum of 64 hex values is allowed per request.",
+        )
+    return ColorController.get_color_labels_control(hex)
 
 
 @router.get("/color/{hex}", response_model=ColorInfoResponse, status_code=200)

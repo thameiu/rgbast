@@ -112,6 +112,17 @@ class ColorInfoResponse(SQLModel):
     label_is_approximate: bool
 
 
+class ColorLabelItemResponse(SQLModel):
+    input_hex: str
+    normalized_hex: str
+    closest_name: str | None
+    label_is_approximate: bool
+
+
+class ColorLabelsResponse(SQLModel):
+    labels: list[ColorLabelItemResponse]
+
+
 class PaletteGenerateRequest(SQLModel):
     count: int = Field(default=5, ge=2, le=8)
     base_colors: list[str] = Field(default_factory=list)
