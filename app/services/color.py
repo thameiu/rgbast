@@ -32,6 +32,11 @@ from app.schemas.color import (
     ColorRGB,
     ColorXYZ,
     GeneratedColor,
+    PaletteAccessibilityAuditRequest,
+    PaletteAccessibilityAuditResponse,
+    PaletteAccessibilityColorInput,
+    PaletteAccessibilityContrastItem,
+    PaletteAccessibilityNamedColor,
     PaletteGenerateRequest,
     PaletteGenerateResponse,
 )
@@ -144,6 +149,58 @@ class ColorService:
             )
 
         return ColorLabelsResponse(labels=labels)
+
+    @staticmethod
+    def get_palette_accessibility_audit(
+        request: PaletteAccessibilityAuditRequest,
+    ) -> PaletteAccessibilityAuditResponse:
+        normalized_selected = ColorService._normalize_hex(request.selected_hex)
+        normalized_palette = [
+            PaletteAccessibilityColorInput(
+                hex=ColorService._normalize_hex(color.hex),
+                label=color.label,
+            )
+            for color in request.palette_colors
+        ]
+
+        selected_index = next(
+            (index for index, color in enumerate(normalized_palette) if color.hex == normalized_selected),
+            None,
+        )
+        if selected_index is None:
+            raise ValueError("Selected color must be one of the palette colors.")
+
+        selected_info = ColorService.get_color_info(normalized_selected)
+        labels_response = ColorService.get_color_labels([color.hex for color in normalized_palette])
+
+        named_colors = [
+            PaletteAccessibilityNamedColor(
+                input_hex=color.input_hex,
+                normalized_hex=color.normalized_hex,
+                closest_name=color.closest_name,
+                label_is_approximate=color.label_is_approximate,
+                palette_label=normalized_palette[index].label,
+            )
+            for index, color in enumerate(labels_response.labels)
+        ]
+
+        contrast_with_palette = [
+            PaletteAccessibilityContrastItem(
+                color=named_colors[index],
+                contrast=ColorService.get_contrast_check(normalized_selected, palette_color.hex),
+            )
+            for index, palette_color in enumerate(normalized_palette)
+            if index != selected_index
+        ]
+
+        return PaletteAccessibilityAuditResponse(
+            selected_color=selected_info,
+            selected_palette_color=named_colors[selected_index],
+            palette_colors=named_colors,
+            contrast_on_white=ColorService.get_contrast_check(normalized_selected, "FFFFFF"),
+            contrast_on_black=ColorService.get_contrast_check(normalized_selected, "000000"),
+            contrast_with_palette=contrast_with_palette,
+        )
 
     @staticmethod
     def _normalize_hex(hex_value: str) -> str:

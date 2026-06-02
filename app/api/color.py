@@ -6,6 +6,8 @@ from app.schemas.color import (
     ColorContrastCheckResponse,
     ColorInfoResponse,
     ColorLabelsResponse,
+    PaletteAccessibilityAuditRequest,
+    PaletteAccessibilityAuditResponse,
     PaletteGenerateRequest,
     PaletteGenerateResponse,
 )
@@ -68,6 +70,11 @@ async def generate_palette_from_image_handler(
 @router.get("/color/{hex}/contrast/{hex2}", response_model=ColorContrastCheckResponse, status_code=200)
 def get_contrast_check_handler(hex: str, hex2: str):
     return ColorController.get_contrast_check_control(hex, hex2)
+
+
+@router.post("/color/palette/accessibility", response_model=PaletteAccessibilityAuditResponse, status_code=200)
+def get_palette_accessibility_handler(request: PaletteAccessibilityAuditRequest):
+    return ColorController.get_palette_accessibility_audit_control(request)
 
 
 @router.get("/color/labels", response_model=ColorLabelsResponse, status_code=200)

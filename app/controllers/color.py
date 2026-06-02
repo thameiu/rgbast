@@ -2,6 +2,8 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from app.schemas.color import (
+    PaletteAccessibilityAuditRequest,
+    PaletteAccessibilityAuditResponse,
     ColorContrastCheckResponse,
     ColorInfoResponse,
     ColorLabelsResponse,
@@ -12,6 +14,25 @@ from app.services.color import ColorService, PaletteGeneratorService, PaletteIma
 
 
 class ColorController:
+    @staticmethod
+    def get_palette_accessibility_audit_control(
+        request: PaletteAccessibilityAuditRequest,
+    ) -> PaletteAccessibilityAuditResponse:
+        try:
+            return ColorService.get_palette_accessibility_audit(request)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(e),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred: " + str(e),
+            )
+
     @staticmethod
     def get_color_info_control(hex_value: str) -> ColorInfoResponse:
         try:

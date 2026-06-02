@@ -123,6 +123,47 @@ class ColorLabelsResponse(SQLModel):
     labels: list[ColorLabelItemResponse]
 
 
+class PaletteAccessibilityColorInput(SQLModel):
+    hex: str
+    label: str | None = None
+
+
+class PaletteAccessibilityNamedColor(SQLModel):
+    input_hex: str
+    normalized_hex: str
+    closest_name: str | None
+    label_is_approximate: bool
+    palette_label: str | None = None
+
+
+class PaletteAccessibilityContrastItem(SQLModel):
+    color: PaletteAccessibilityNamedColor
+    contrast: ColorContrastCheckResponse
+
+
+class PaletteAccessibilityAuditRequest(SQLModel):
+    selected_hex: str
+    palette_colors: list[PaletteAccessibilityColorInput] = Field(default_factory=list)
+
+    @field_validator("palette_colors")
+    @classmethod
+    def validate_palette_colors(cls, value: list[PaletteAccessibilityColorInput]) -> list[PaletteAccessibilityColorInput]:
+        if not value:
+            raise ValueError("Palette must contain at least one color.")
+        if len(value) > 15:
+            raise ValueError("Palette cannot contain more than 15 colors.")
+        return value
+
+
+class PaletteAccessibilityAuditResponse(SQLModel):
+    selected_color: ColorInfoResponse
+    selected_palette_color: PaletteAccessibilityNamedColor
+    palette_colors: list[PaletteAccessibilityNamedColor]
+    contrast_on_white: ColorContrastCheckResponse
+    contrast_on_black: ColorContrastCheckResponse
+    contrast_with_palette: list[PaletteAccessibilityContrastItem]
+
+
 class PaletteGenerateRequest(SQLModel):
     count: int = Field(default=5, ge=2, le=8)
     base_colors: list[str] = Field(default_factory=list)
