@@ -55,6 +55,12 @@ def _build_absolute_url(path: str) -> str:
     return f"{FRONTEND_URL}{path}"
 
 
+def _force_https_url(url: str) -> str:
+    if url.startswith("http://"):
+        return "https://" + url[len("http://"):]
+    return url
+
+
 def _iso_lastmod(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -154,7 +160,7 @@ def sitemap_xml(session: SessionDep) -> Response:
 @app.get("/sitemap-hex.xml")
 def sitemap_hex_index(request: Request) -> Response:
     urls = [
-        str(request.url_for("sitemap_hex_page", page=index))
+        _force_https_url(str(request.url_for("sitemap_hex_page", page=index)))
         for index in range(1, HEX_SITEMAP_PAGE_COUNT + 1)
     ]
     return Response(_build_sitemap_index_xml(urls), media_type="application/xml")
@@ -180,8 +186,8 @@ def sitemap_hex_page(page: int) -> Response:
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
 def robots_txt(request: Request) -> str:
-    sitemap_url = str(request.url_for("sitemap_xml"))
-    sitemap_hex_url = str(request.url_for("sitemap_hex_index"))
+    sitemap_url = _force_https_url(str(request.url_for("sitemap_xml")))
+    sitemap_hex_url = _force_https_url(str(request.url_for("sitemap_hex_index")))
     return "\n".join(
         [
             "User-agent: *",
