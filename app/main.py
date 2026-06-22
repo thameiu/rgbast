@@ -18,6 +18,8 @@ app = FastAPI(title="RGBAST API")
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://rgbast.com").rstrip("/")
 SITEMAP_MAX_URLS = int(os.getenv("SITEMAP_MAX_URLS", "50000"))
+HEX_COLOR_SPACE_SIZE = 16**6
+HEX_SITEMAP_PAGE_COUNT = (HEX_COLOR_SPACE_SIZE + SITEMAP_MAX_URLS - 1) // SITEMAP_MAX_URLS
 
 ALLOWED_ORIGINS = [
     "https://rgbast-app.vercel.app",
@@ -117,9 +119,7 @@ def _resolve_sitemap_rows(session: SessionDep) -> list[dict[str, str]]:
     return rows[:SITEMAP_MAX_URLS]
 
 
-@app.get("/sitemap.xml")
-def sitemap_xml(session: SessionDep) -> Response:
-    rows = _resolve_sitemap_rows(session)
+def _build_urlset_xml(rows: list[dict[str, str]]) -> str:
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for row in rows:
         lines.append("  <url>")
@@ -132,12 +132,56 @@ def sitemap_xml(session: SessionDep) -> Response:
             lines.append(f"    <priority>{row['priority']}</priority>")
         lines.append("  </url>")
     lines.append("</urlset>")
-    return Response("\n".join(lines), media_type="application/xml")
+    return "\n".join(lines)
+
+
+def _build_sitemap_index_xml(urls: list[str]) -> str:
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for url in urls:
+        lines.append("  <sitemap>")
+        lines.append(f"    <loc>{url}</loc>")
+        lines.append("  </sitemap>")
+    lines.append("</sitemapindex>")
+    return "\n".join(lines)
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml(session: SessionDep) -> Response:
+    rows = _resolve_sitemap_rows(session)
+    return Response(_build_urlset_xml(rows), media_type="application/xml")
+
+
+@app.get("/sitemap-hex.xml")
+def sitemap_hex_index(request: Request) -> Response:
+    urls = [
+        str(request.url_for("sitemap_hex_page", page=index))
+        for index in range(1, HEX_SITEMAP_PAGE_COUNT + 1)
+    ]
+    return Response(_build_sitemap_index_xml(urls), media_type="application/xml")
+
+
+@app.get("/sitemap-hex-{page}.xml", name="sitemap_hex_page")
+def sitemap_hex_page(page: int) -> Response:
+    if page < 1 or page > HEX_SITEMAP_PAGE_COUNT:
+        return Response(status_code=404)
+
+    start = (page - 1) * SITEMAP_MAX_URLS
+    end = min(start + SITEMAP_MAX_URLS, HEX_COLOR_SPACE_SIZE)
+    rows = [
+        {
+            "loc": _build_absolute_url(f"/color/{value:06x}"),
+            "changefreq": "monthly",
+            "priority": "0.4",
+        }
+        for value in range(start, end)
+    ]
+    return Response(_build_urlset_xml(rows), media_type="application/xml")
 
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
 def robots_txt(request: Request) -> str:
     sitemap_url = str(request.url_for("sitemap_xml"))
+    sitemap_hex_url = str(request.url_for("sitemap_hex_index"))
     return "\n".join(
         [
             "User-agent: *",
@@ -149,5 +193,6 @@ def robots_txt(request: Request) -> str:
             "Disallow: /forgot-password",
             "",
             f"Sitemap: {sitemap_url}",
+            f"Sitemap: {sitemap_hex_url}",
         ]
     )
