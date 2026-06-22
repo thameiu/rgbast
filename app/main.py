@@ -18,8 +18,9 @@ app = FastAPI(title="RGBAST API")
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://rgbast.com").rstrip("/")
 SITEMAP_MAX_URLS = int(os.getenv("SITEMAP_MAX_URLS", "50000"))
+HEX_SITEMAP_MAX_URLS = max(1, int(os.getenv("HEX_SITEMAP_MAX_URLS", str(max(1, SITEMAP_MAX_URLS // 100)))))
 HEX_COLOR_SPACE_SIZE = 16**6
-HEX_SITEMAP_PAGE_COUNT = (HEX_COLOR_SPACE_SIZE + SITEMAP_MAX_URLS - 1) // SITEMAP_MAX_URLS
+HEX_SITEMAP_PAGE_COUNT = (HEX_COLOR_SPACE_SIZE + HEX_SITEMAP_MAX_URLS - 1) // HEX_SITEMAP_MAX_URLS
 
 ALLOWED_ORIGINS = [
     "https://rgbast-app.vercel.app",
@@ -158,9 +159,9 @@ def sitemap_xml(session: SessionDep) -> Response:
 
 
 @app.get("/sitemap-hex.xml")
-def sitemap_hex_index(request: Request) -> Response:
+def sitemap_hex_index() -> Response:
     urls = [
-        _force_https_url(str(request.url_for("sitemap_hex_page", page=index)))
+        _build_absolute_url(f"/sitemap-hex-{index}.xml")
         for index in range(1, HEX_SITEMAP_PAGE_COUNT + 1)
     ]
     return Response(_build_sitemap_index_xml(urls), media_type="application/xml")
@@ -171,8 +172,8 @@ def sitemap_hex_page(page: int) -> Response:
     if page < 1 or page > HEX_SITEMAP_PAGE_COUNT:
         return Response(status_code=404)
 
-    start = (page - 1) * SITEMAP_MAX_URLS
-    end = min(start + SITEMAP_MAX_URLS, HEX_COLOR_SPACE_SIZE)
+    start = (page - 1) * HEX_SITEMAP_MAX_URLS
+    end = min(start + HEX_SITEMAP_MAX_URLS, HEX_COLOR_SPACE_SIZE)
     rows = [
         {
             "loc": _build_absolute_url(f"/color/{value:06x}"),
@@ -186,8 +187,8 @@ def sitemap_hex_page(page: int) -> Response:
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
 def robots_txt(request: Request) -> str:
-    sitemap_url = _force_https_url(str(request.url_for("sitemap_xml")))
-    sitemap_hex_url = _force_https_url(str(request.url_for("sitemap_hex_index")))
+    sitemap_url = _build_absolute_url("/sitemap.xml")
+    sitemap_hex_url = _build_absolute_url("/sitemap-hex.xml")
     return "\n".join(
         [
             "User-agent: *",
