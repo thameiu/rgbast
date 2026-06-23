@@ -17,6 +17,7 @@ from app.services.palette import PaletteService
 app = FastAPI(title="RGBAST API")
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://rgbast.com").rstrip("/")
+API_URL = os.getenv("API_URL", "https://api.rgbast.com").rstrip("/")
 SITEMAP_MAX_URLS = int(os.getenv("SITEMAP_MAX_URLS", "50000"))
 HEX_SITEMAP_MAX_URLS = max(1, int(os.getenv("HEX_SITEMAP_MAX_URLS", str(max(1, SITEMAP_MAX_URLS // 100)))))
 HEX_COLOR_SPACE_SIZE = 16**6
@@ -54,6 +55,10 @@ async def root():
 
 def _build_absolute_url(path: str) -> str:
     return f"{FRONTEND_URL}{path}"
+
+
+def _build_api_url(path: str) -> str:
+    return f"{API_URL}{path}"
 
 
 def _force_https_url(url: str) -> str:
@@ -161,7 +166,7 @@ def sitemap_xml(session: SessionDep) -> Response:
 @app.get("/sitemap-hex.xml")
 def sitemap_hex_index() -> Response:
     urls = [
-        _build_absolute_url(f"/sitemap-hex-{index}.xml")
+        _build_api_url(f"/sitemap-hex-{index}.xml")
         for index in range(1, HEX_SITEMAP_PAGE_COUNT + 1)
     ]
     return Response(_build_sitemap_index_xml(urls), media_type="application/xml")
