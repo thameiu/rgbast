@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from sqlmodel import select
 
-from app.api import palettes, users, auth, color, folders, search, colleagues
+from app.api import palettes, users, auth, color, folders, search, colleagues, color_bookmarks
 from app.core.database import SessionDep
 from app.models.palette import Palette
 from app.models.user import User
@@ -44,6 +44,7 @@ app.include_router(auth.router, tags=["auth"])
 app.include_router(palettes.router, tags=["palettes"])
 app.include_router(folders.router, tags=["folders"])
 app.include_router(color.router, tags=["color"])
+app.include_router(color_bookmarks.router, tags=["color-bookmarks"])
 app.include_router(search.router, tags=["search"])
 app.include_router(colleagues.router, tags=["colleagues"])
 
