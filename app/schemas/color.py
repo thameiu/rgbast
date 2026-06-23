@@ -10,6 +10,12 @@ class ColorRGB(SQLModel):
     b: int
 
 
+class ColorRGBPercent(SQLModel):
+    r: float
+    g: float
+    b: float
+
+
 class ColorHSL(SQLModel):
     h: float
     s: float
@@ -21,6 +27,21 @@ class ColorCMYK(SQLModel):
     m: float
     y: float
     k: float
+
+
+class ColorHexReference(SQLModel):
+    hex: str
+
+
+class ColorReferenceRow(SQLModel):
+    hex: str
+    rgb: ColorRGB
+    cmyk: ColorCMYK
+
+
+class ColorRelatedSet(SQLModel):
+    base: ColorHexReference
+    colors: list[ColorHexReference]
 
 
 class ColorHSB(SQLModel):
@@ -99,14 +120,22 @@ class ColorInfoResponse(SQLModel):
     normalized_hex: str
     closest_name: str | None
     rgb: ColorRGB
+    rgb_percent: ColorRGBPercent
     hsl: ColorHSL
     cmyk: ColorCMYK
+    cmyk_percent: ColorCMYK
     hsb: ColorHSB
     lab: ColorLAB
     xyz: ColorXYZ
     lch: ColorLCH
     luv: ColorLUV
     hwb: ColorHWB
+    shades: list[ColorReferenceRow]
+    tints: list[ColorReferenceRow]
+    complementary: ColorRelatedSet
+    triadic: ColorRelatedSet
+    analogous: ColorRelatedSet
+    closest_web_safe: ColorReferenceRow
     accessibility: ColorAccessibility
     bast_score: float
     label_is_approximate: bool

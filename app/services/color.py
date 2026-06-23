@@ -24,11 +24,15 @@ from app.schemas.color import (
     ColorHSB,
     ColorHWB,
     ColorInfoResponse,
+    ColorHexReference,
     ColorLabelItemResponse,
     ColorLabelsResponse,
     ColorLAB,
     ColorLCH,
+    ColorRGBPercent,
     ColorLUV,
+    ColorReferenceRow,
+    ColorRelatedSet,
     ColorRGB,
     ColorXYZ,
     GeneratedColor,
@@ -73,6 +77,13 @@ class ColorService:
         contrast = ColorService._contrast_info(r, g, b)
         cb = ColorService._color_blindness_previews(r, g, b)
         bast_score = ColorService._bast_score(r, g, b)
+        rgb_percent = ColorService._to_rgb_percent(r, g, b)
+        shades = ColorService._build_shades(r, g, b)
+        tints = ColorService._build_tints(r, g, b)
+        complementary = ColorService._build_related_set(normalized_hex, hsl, [180.0])
+        triadic = ColorService._build_related_set(normalized_hex, hsl, [120.0, 240.0])
+        analogous = ColorService._build_related_set(normalized_hex, hsl, [-30.0, 30.0])
+        closest_web_safe = ColorService._closest_web_safe(r, g, b)
 
         closest_name = ColorService._closest_name(normalized_hex, r, g, b)
         label_is_approximate = False
@@ -89,14 +100,22 @@ class ColorService:
             closest_name=closest_name,
             label_is_approximate=label_is_approximate,
             rgb=ColorRGB(r=r, g=g, b=b),
+            rgb_percent=rgb_percent,
             hsl=hsl,
             cmyk=cmyk,
+            cmyk_percent=cmyk,
             hsb=hsb,
             lab=lab,
             xyz=xyz,
             lch=lch,
             luv=luv,
             hwb=hwb,
+            shades=shades,
+            tints=tints,
+            complementary=complementary,
+            triadic=triadic,
+            analogous=analogous,
+            closest_web_safe=closest_web_safe,
             accessibility=ColorAccessibility(
                 color_blindness=cb,
                 contrast=contrast,
@@ -250,6 +269,14 @@ class ColorService:
         )
 
     @staticmethod
+    def _to_rgb_percent(r: int, g: int, b: int) -> ColorRGBPercent:
+        return ColorRGBPercent(
+            r=round((r / 255.0) * 100, 2),
+            g=round((g / 255.0) * 100, 2),
+            b=round((b / 255.0) * 100, 2),
+        )
+
+    @staticmethod
     def _srgb_to_linear(c: float) -> float:
         if c <= 0.04045:
             return c / 12.92
@@ -355,6 +382,70 @@ class ColorService:
     @staticmethod
     def _rgb_to_hex(r: int, g: int, b: int) -> str:
         return f"{r:02X}{g:02X}{b:02X}"
+
+    @staticmethod
+    def _build_color_reference_row(r: int, g: int, b: int) -> ColorReferenceRow:
+        return ColorReferenceRow(
+            hex=ColorService._rgb_to_hex(r, g, b),
+            rgb=ColorRGB(r=r, g=g, b=b),
+            cmyk=ColorService._to_cmyk(r, g, b),
+        )
+
+    @staticmethod
+    def _mix_rgb(
+        source: tuple[int, int, int],
+        target: tuple[int, int, int],
+        ratio: float,
+    ) -> tuple[int, int, int]:
+        return (
+            ColorService._clamp_u8(source[0] + (target[0] - source[0]) * ratio),
+            ColorService._clamp_u8(source[1] + (target[1] - source[1]) * ratio),
+            ColorService._clamp_u8(source[2] + (target[2] - source[2]) * ratio),
+        )
+
+    @staticmethod
+    def _build_shades(r: int, g: int, b: int) -> list[ColorReferenceRow]:
+        base = (r, g, b)
+        return [
+            ColorService._build_color_reference_row(*ColorService._mix_rgb(base, (0, 0, 0), step / 10.0))
+            for step in range(1, 10)
+        ]
+
+    @staticmethod
+    def _build_tints(r: int, g: int, b: int) -> list[ColorReferenceRow]:
+        base = (r, g, b)
+        return [
+            ColorService._build_color_reference_row(*ColorService._mix_rgb(base, (255, 255, 255), step / 10.0))
+            for step in range(1, 10)
+        ]
+
+    @staticmethod
+    def _hsl_to_rgb(h: float, s: float, l: float) -> tuple[int, int, int]:
+        rf, gf, bf = colorsys.hls_to_rgb((h % 360) / 360.0, l / 100.0, s / 100.0)
+        return (
+            ColorService._clamp_u8(rf * 255),
+            ColorService._clamp_u8(gf * 255),
+            ColorService._clamp_u8(bf * 255),
+        )
+
+    @staticmethod
+    def _build_related_set(base_hex: str, hsl: ColorHSL, hue_offsets: list[float]) -> ColorRelatedSet:
+        colors = []
+        for offset in hue_offsets:
+            r, g, b = ColorService._hsl_to_rgb(hsl.h + offset, hsl.s, hsl.l)
+            colors.append(ColorHexReference(hex=ColorService._rgb_to_hex(r, g, b)))
+        return ColorRelatedSet(
+            base=ColorHexReference(hex=base_hex),
+            colors=colors,
+        )
+
+    @staticmethod
+    def _closest_web_safe(r: int, g: int, b: int) -> ColorReferenceRow:
+        def snap(channel: int) -> int:
+            candidates = [0, 51, 102, 153, 204, 255]
+            return min(candidates, key=lambda candidate: abs(candidate - channel))
+
+        return ColorService._build_color_reference_row(snap(r), snap(g), snap(b))
 
     @staticmethod
     def _apply_matrix(r: int, g: int, b: int, matrix: tuple[tuple[float, float, float], ...]) -> tuple[int, int, int]:
