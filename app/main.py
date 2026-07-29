@@ -2,7 +2,8 @@ import os
 from datetime import datetime
 from urllib.parse import quote
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from sqlalchemy import text
 from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
@@ -61,14 +62,23 @@ async def root():
 @app.get("/health/db", include_in_schema=False)
 def database_health(session: SessionDep):
     try:
-        session.exec(text("SELECT 1")).one()
+        result = session.execute(text("SELECT 1"))
+        value = result.scalar_one()
+
+        if value != 1:
+            raise RuntimeError("Unexpected database response")
 
         return {
             "status": "healthy",
             "database": "connected",
         }
 
+    except HTTPException:
+        raise
+
     except Exception as exc:
+        print(f"Database healthcheck failed: {type(exc).__name__}: {exc}")
+
         raise HTTPException(
             status_code=503,
             detail={
