@@ -48,11 +48,34 @@ app.include_router(color_bookmarks.router, tags=["color-bookmarks"])
 app.include_router(search.router, tags=["search"])
 app.include_router(colleagues.router, tags=["colleagues"])
 
-
 @app.get("/")
 async def root():
-    return {"message": "Welcome to RGBAST ! If cou can read this, you can read this, like really read this, like for real."}
+    return {
+        "message": (
+            "Welcome to RGBAST ! If cou can read this, you can read this, "
+            "like really read this, like for real."
+        )
+    }
 
+
+@app.get("/health/db", include_in_schema=False)
+def database_health(session: SessionDep):
+    try:
+        session.exec(text("SELECT 1")).one()
+
+        return {
+            "status": "healthy",
+            "database": "connected",
+        }
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "database": "unreachable",
+            },
+        ) from exc
 
 def _build_absolute_url(path: str) -> str:
     return f"{FRONTEND_URL}{path}"
