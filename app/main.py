@@ -1,9 +1,11 @@
+import logging
 import os
 from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request, HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, OperationalError, SQLAlchemyError
 from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
@@ -16,6 +18,7 @@ from app.models.user import User
 from app.services.palette import PaletteService
 
 app = FastAPI(title="RGBAST API")
+logger = logging.getLogger("rgbast.api")
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://rgbast.com").rstrip("/")
 API_URL = os.getenv("API_URL", "https://api.rgbast.com").rstrip("/")
@@ -49,6 +52,24 @@ app.include_router(color_bookmarks.router, tags=["color-bookmarks"])
 app.include_router(search.router, tags=["search"])
 app.include_router(colleagues.router, tags=["colleagues"])
 
+
+@app.middleware("http")
+async def log_database_failures(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except (OperationalError, DBAPIError, SQLAlchemyError) as exc:
+        logger.exception(
+            "database error during request",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "query": request.url.query,
+                "client": request.client.host if request.client else None,
+                "exception_type": type(exc).__name__,
+            },
+        )
+        raise
+
 @app.get("/")
 async def root():
     return {
@@ -77,7 +98,10 @@ def database_health(session: SessionDep):
         raise
 
     except Exception as exc:
-        print(f"Database healthcheck failed: {type(exc).__name__}: {exc}")
+        logger.exception(
+            "database healthcheck failed",
+            extra={"exception_type": type(exc).__name__},
+        )
 
         raise HTTPException(
             status_code=503,
