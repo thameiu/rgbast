@@ -1,36 +1,58 @@
-name: Deploy Backend
+name: Deploy backend
 
 on:
   push:
     branches:
       - main
 
+  workflow_dispatch:
+
+concurrency:
+  group: rgbast-backend-production
+  cancel-in-progress: true
+
 jobs:
   deploy:
+    name: Deploy to VPS
     runs-on: ubuntu-latest
 
+    environment:
+      name: production
+      url: https://api.rgbast.com
+
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST || vars.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER || vars.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_PORT: ${{ secrets.VPS_PORT || vars.VPS_PORT || '22' }}
+      VPS_FINGERPRINT: ${{ secrets.VPS_FINGERPRINT || vars.VPS_FINGERPRINT }}
+
     steps:
+      - name: Validate deploy configuration
+        run: |
+          test -n "$VPS_HOST" || {
+            echo "Missing VPS_HOST secret/var in rgbast repository or production environment"
+            exit 1
+          }
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.0
+          test -n "$VPS_USER" || {
+            echo "Missing VPS_USER secret/var in rgbast repository or production environment"
+            exit 1
+          }
+
+          test -n "$VPS_SSH_KEY" || {
+            echo "Missing VPS_SSH_KEY secret in rgbast repository or production environment"
+            exit 1
+          }
+
+      - name: Deploy backend through SSH
+        uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -x
-            echo "WHO AM I"
-            whoami
+          host: ${{ env.VPS_HOST }}
+          username: ${{ env.VPS_USER }}
+          key: ${{ env.VPS_SSH_KEY }}
+          port: ${{ env.VPS_PORT }}
+          fingerprint: ${{ env.VPS_FINGERPRINT }}
+          command_timeout: 10m
+          script: deploy-backend
 
-            echo "WHERE AM I"
-            pwd
-
-            echo "HOME CONTENT"
-            ls -la /home/deploy || true
-
-            echo "SCRIPTS"
-            ls -la /home/deploy/scripts || true
-            cat /home/deploy/scripts/d.sh
-
-            echo "RUN SCRIPT"
-            bash -x /home/deploy/scripts/d.sh
