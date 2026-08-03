@@ -407,16 +407,16 @@ class ColorService:
     def _build_shades(r: int, g: int, b: int) -> list[ColorReferenceRow]:
         base = (r, g, b)
         return [
-            ColorService._build_color_reference_row(*ColorService._mix_rgb(base, (0, 0, 0), step / 10.0))
-            for step in range(1, 10)
+            ColorService._build_color_reference_row(*ColorService._mix_rgb(base, (0, 0, 0), step / 9.0))
+            for step in range(1, 9)
         ]
 
     @staticmethod
     def _build_tints(r: int, g: int, b: int) -> list[ColorReferenceRow]:
         base = (r, g, b)
         return [
-            ColorService._build_color_reference_row(*ColorService._mix_rgb(base, (255, 255, 255), step / 10.0))
-            for step in range(1, 10)
+            ColorService._build_color_reference_row(*ColorService._mix_rgb(base, (255, 255, 255), step / 9.0))
+            for step in range(1, 9)
         ]
 
     @staticmethod
