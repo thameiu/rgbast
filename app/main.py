@@ -28,6 +28,8 @@ HEX_COLOR_SPACE_SIZE = 16**6
 HEX_SITEMAP_PAGE_COUNT = (HEX_COLOR_SPACE_SIZE + HEX_SITEMAP_MAX_URLS - 1) // HEX_SITEMAP_MAX_URLS
 
 ALLOWED_ORIGINS = [
+    "https://rgbast.com",
+    "https://www.rgbast.com",
     "https://rgbast-app.vercel.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
