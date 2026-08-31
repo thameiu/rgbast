@@ -1,7 +1,7 @@
 from sqlmodel import SQLModel, Field
 from pydantic import field_validator
 
-HARMONY_MODES = {"random", "analogous", "complementary", "triadic", "split_complementary", "tetradic"}
+HARMONY_MODES = {"analogous", "complementary", "triadic", "split_complementary", "tetradic"}
 
 
 class ColorRGB(SQLModel):
@@ -198,7 +198,7 @@ class PaletteGenerateRequest(SQLModel):
     base_colors: list[str] = Field(default_factory=list)
     contrast: int = Field(default=5, ge=1, le=10)
     include_shades: bool = True
-    harmony: str = "random"
+    harmony: str = "analogous"
 
     @field_validator("base_colors")
     @classmethod

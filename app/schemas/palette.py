@@ -80,7 +80,7 @@ class PaletteSnapshotSave(SQLModel):
     create_branch: bool = Field(default=False)
     branch_title: str | None = Field(default=None, max_length=100)
     palette_colors: list[PaletteColorSave] = Field(default=[])
-    comment: str = Field(max_length=500)
+    comment: str | None = Field(default=None, max_length=500)
 
     @field_validator("palette_colors")
     @classmethod

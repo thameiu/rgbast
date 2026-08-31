@@ -621,6 +621,26 @@ class PaletteService:
         session.flush()
         return new_branch
 
+    @staticmethod
+    def _default_snapshot_comment(
+        palette_id: int,
+        branch_id: int | None,
+        session: SessionDep,
+    ) -> str:
+        query = select(Palette_Snapshot).where(Palette_Snapshot.palette_id == palette_id)
+        if branch_id is None:
+            query = query.where(Palette_Snapshot.branch_id.is_(None))
+        else:
+            query = query.where(Palette_Snapshot.branch_id == branch_id)
+
+        snapshot_number = len(session.exec(query).all()) + 1
+        comment = f"snapshot n°{snapshot_number}"
+        if branch_id is not None:
+            branch = session.get(Palette_Branch, branch_id)
+            if branch:
+                comment += f"-{branch.title}"
+        return comment
+
     # Creates a snapshot and records its diff against a previous snapshot.
     def create_snapshot_with_changes(
         palette_id: int,
@@ -836,6 +856,13 @@ class PaletteService:
                 )
 
         prev_colors = PaletteService.get_snapshot_state(prev_snapshot, session)
+        comment = (saveSchema.comment or "").strip()
+        if not comment:
+            comment = PaletteService._default_snapshot_comment(
+                palette_id,
+                target_branch_id,
+                session,
+            )
 
         new_inputs = saveSchema.palette_colors
         new_snapshot, changes_to_record = PaletteService.create_snapshot_with_changes(
@@ -843,7 +870,7 @@ class PaletteService:
             previous_snapshot=prev_snapshot,
             previous_colors=prev_colors,
             new_inputs=new_inputs,
-            comment=saveSchema.comment,
+            comment=comment,
             branch_id=target_branch_id,
             session=session,
         )

@@ -568,7 +568,6 @@ class ColorService:
 
 # Hue offsets for each harmony mode (degrees).  The pool is cycled as needed.
 _HARMONY_OFFSETS: dict[str, list[float]] = {
-    "random": [],
     "analogous":           [0, 25, -25, 50, -50, 15, -15, 35, -35],
     "complementary":       [0, 180, 20, 200, -20, 160, 10, 190],
     "triadic":             [0, 120, 240, 15, 135, 255, -15, 105, 225],
@@ -580,10 +579,16 @@ _HARMONY_OFFSETS: dict[str, list[float]] = {
 class PaletteGeneratorService:
 
     @staticmethod
-    def _rgb_distance(hex1: str, hex2: str) -> float:
+    def _lab_distance(hex1: str, hex2: str) -> float:
         r1, g1, b1 = ColorService._hex_to_rgb(hex1)
         r2, g2, b2 = ColorService._hex_to_rgb(hex2)
-        return math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2)
+        lab1 = ColorService._xyz_to_lab(ColorService._to_xyz(r1, g1, b1))
+        lab2 = ColorService._xyz_to_lab(ColorService._to_xyz(r2, g2, b2))
+        return math.sqrt(
+            (lab1.l - lab2.l) ** 2
+            + (lab1.a - lab2.a) ** 2
+            + (lab1.b - lab2.b) ** 2
+        )
 
     @staticmethod
     def _bast(hex_str: str) -> float:
@@ -601,21 +606,38 @@ class PaletteGeneratorService:
         seed_colors: list[GeneratedColor],
         min_dist: float = 40.0,
     ) -> list[GeneratedColor]:
-        """Greedy: pick n candidates with lowest BAST score spaced >= min_dist apart."""
+        """Pick low-BAST candidates while maximizing perceptual separation."""
         hard = PaletteGeneratorService._HARD_MIN_DIST
-        available = sorted(candidates, key=lambda c: PaletteGeneratorService._bast(c.hex))
+        deduped: dict[str, GeneratedColor] = {}
+        for candidate in candidates:
+            deduped.setdefault(candidate.hex, candidate)
+        available = list(deduped.values())
         picked: list[GeneratedColor] = list(seed_colors)
         result: list[GeneratedColor] = []
 
         while len(result) < n:
             chosen: GeneratedColor | None = None
-            # Fallback chain: preferred → half → hard floor (never zero)
             for dist_threshold in (min_dist, max(hard, min_dist / 2), hard):
-                for cand in available:
-                    if all(PaletteGeneratorService._rgb_distance(cand.hex, p.hex) >= dist_threshold
-                           for p in picked):
-                        chosen = cand
-                        break
+                viable = [
+                    cand
+                    for cand in available
+                    if all(
+                        PaletteGeneratorService._lab_distance(cand.hex, p.hex) >= dist_threshold
+                        for p in picked
+                    )
+                ]
+                if viable:
+                    chosen = max(
+                        viable,
+                        key=lambda cand: (
+                            min(
+                                PaletteGeneratorService._lab_distance(cand.hex, p.hex)
+                                for p in picked
+                            )
+                            if picked
+                            else 100.0
+                        ) - PaletteGeneratorService._bast(cand.hex) * 0.18,
+                    )
                 if chosen is not None:
                     break
 
@@ -648,14 +670,9 @@ class PaletteGeneratorService:
 
         # ── Build hue pool ───────────────────────────────────────────────────
         anchor: float = base_hues[0] if base_hues else rng.uniform(0, 360)
-        if request.harmony == "random" and not base_hues:
-            start = rng.uniform(0, 360)
-            hue_pool = [(start + i * (360 / max(count, 1)) + rng.uniform(-22, 22)) % 360
-                        for i in range(max(count, 8))]
-        else:
-            offsets = _HARMONY_OFFSETS.get(request.harmony) or [0, 30, -30, 60, -60, 90, 120]
-            anchors = base_hues if base_hues else [anchor]
-            hue_pool = [(a + off) % 360 for a in anchors for off in offsets]
+        offsets = _HARMONY_OFFSETS.get(request.harmony) or _HARMONY_OFFSETS["analogous"]
+        anchors = base_hues if base_hues else [anchor]
+        hue_pool = [(a + off) % 360 for a in anchors for off in offsets]
 
         hue_pool = [(h + rng.uniform(-7, 7)) % 360 for h in hue_pool]
         if not hue_pool:
@@ -718,11 +735,14 @@ class PaletteGeneratorService:
         # ── Fill slots not occupied by base colors ────────────────────────────
         remaining = max(0, count - len(base_hexes))
         gen_colors: list[GeneratedColor] = []
+        base_gen = [GeneratedColor(hex=h) for h in base_hexes]
+        min_dist = max(20, int(22 + c_norm * 68))   # higher contrast requires stronger perceptual separation
         OVERSAMPLE = 4
 
         if request.include_shades and remaining >= 2:
             # Shade families: fewer hues, spread lightness within each family.
-            # Oversample each shade and pick the least-bastard candidate.
+            # Oversample each shade, then pick a perceptually spaced subset.
+            shade_candidates: list[GeneratedColor] = []
             n_families = max(1, remaining // 2)
             family_sizes = [
                 remaining // n_families + (1 if i < remaining % n_families else 0)
@@ -737,11 +757,12 @@ class PaletteGeneratorService:
                         _make(hue_deg, max(l_lo, min(l_hi, l_center + rng.uniform(-6, 6))))
                         for _ in range(OVERSAMPLE)
                     ]
-                    gen_colors.append(min(candidates, key=lambda c: PaletteGeneratorService._bast(c.hex)))
+                    shade_candidates.extend(candidates)
+            gen_colors = PaletteGeneratorService._pick_diverse(shade_candidates, remaining, base_gen, min_dist)
         else:
             # Generate oversampled candidates, then pick diverse low-BAST set
             all_candidates: list[GeneratedColor] = []
-            for i in range(remaining * OVERSAMPLE):
+            for i in range(remaining * OVERSAMPLE * 2):
                 hue_deg = hue_pool[i % len(hue_pool)]
                 if c_norm > 0.5 and remaining > 2:
                     step = (l_hi - l_lo) / (remaining - 1)
@@ -750,23 +771,18 @@ class PaletteGeneratorService:
                     l_pct = rng.uniform(l_lo, l_hi)
                 all_candidates.append(_make(hue_deg, max(l_lo, min(l_hi, l_pct))))
 
-            base_gen = [GeneratedColor(hex=h) for h in base_hexes]
-            min_dist = max(20, int(20 + c_norm * 60))   # 20 … 80: high contrast → colors must be very different
             gen_colors = PaletteGeneratorService._pick_diverse(all_candidates, remaining, base_gen, min_dist)
 
-        # Sort dark→light at high contrast; shuffle for variety otherwise
+        # Sort dark→light at high contrast; otherwise keep most separated picks first.
         if c_norm > 0.6:
             gen_colors.sort(key=lambda c: (
                 int(c.hex[0:2], 16) * 0.299
                 + int(c.hex[2:4], 16) * 0.587
                 + int(c.hex[4:6], 16) * 0.114
             ))
-        else:
-            rng.shuffle(gen_colors)
 
         # Base colors always appear first in the palette
-        base_generated = [GeneratedColor(hex=h) for h in base_hexes]
-        return PaletteGenerateResponse(colors=(base_generated + gen_colors)[:count])
+        return PaletteGenerateResponse(colors=(base_gen + gen_colors)[:count])
 
 
 class PaletteImageService:
