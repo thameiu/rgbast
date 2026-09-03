@@ -480,6 +480,8 @@ class ColorService:
         p = ColorService._apply_matrix(r, g, b, protanopia_m)
         d = ColorService._apply_matrix(r, g, b, deuteranopia_m)
         t = ColorService._apply_matrix(r, g, b, tritanopia_m)
+        gray = ColorService._clamp_u8(0.299 * r + 0.587 * g + 0.114 * b)
+        a = (gray, gray, gray)
 
         return ColorBlindnessPreview(
             protanopia=ColorBlindVariant(
@@ -493,6 +495,10 @@ class ColorService:
             tritanopia=ColorBlindVariant(
                 rgb=ColorRGB(r=t[0], g=t[1], b=t[2]),
                 hex=ColorService._rgb_to_hex(*t),
+            ),
+            achromatopsia=ColorBlindVariant(
+                rgb=ColorRGB(r=a[0], g=a[1], b=a[2]),
+                hex=ColorService._rgb_to_hex(*a),
             ),
         )
 

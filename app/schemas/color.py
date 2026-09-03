@@ -98,6 +98,7 @@ class ColorBlindnessPreview(SQLModel):
     protanopia: ColorBlindVariant
     deuteranopia: ColorBlindVariant
     tritanopia: ColorBlindVariant
+    achromatopsia: ColorBlindVariant
 
 
 class ColorAccessibility(SQLModel):
