@@ -45,12 +45,12 @@ async def generate_palette_from_image_handler(
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="count must be between 1 and 8.",
+            detail="count must be between 1 and 15.",
         )
-    if count < 1 or count > 8:
+    if count < 1 or count > 15:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="count must be between 1 and 8.",
+            detail="count must be between 1 and 15.",
         )
 
     if image.content_type and not image.content_type.startswith("image/"):

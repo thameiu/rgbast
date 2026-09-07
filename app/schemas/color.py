@@ -195,7 +195,7 @@ class PaletteAccessibilityAuditResponse(SQLModel):
 
 
 class PaletteGenerateRequest(SQLModel):
-    count: int = Field(default=5, ge=2, le=8)
+    count: int = Field(default=5, ge=2, le=15)
     base_colors: list[str] = Field(default_factory=list)
     contrast: int = Field(default=5, ge=1, le=10)
     include_shades: bool = True
@@ -204,7 +204,7 @@ class PaletteGenerateRequest(SQLModel):
     @field_validator("base_colors")
     @classmethod
     def validate_base_colors(cls, v: list[str]) -> list[str]:
-        return v[:3]
+        return v[:5]
 
     @field_validator("harmony")
     @classmethod

@@ -834,8 +834,8 @@ class PaletteImageService:
 
     @staticmethod
     def extract_dominant_palette(image_bytes: bytes, count: int) -> PaletteGenerateResponse:
-        if count < 1 or count > 8:
-            raise ValueError("count must be between 1 and 8.")
+        if count < 1 or count > 15:
+            raise ValueError("count must be between 1 and 15.")
         if not image_bytes:
             raise ValueError("Image file is empty.")
         if len(image_bytes) > PaletteImageService.MAX_IMAGE_BYTES:
