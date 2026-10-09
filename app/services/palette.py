@@ -410,6 +410,50 @@ class PaletteService:
 
         return matched
 
+    @staticmethod
+    def get_recent_palette_items(
+        session: SessionDep,
+        limit: int = 24,
+        owner_user_ids: set[int] | None = None,
+    ):
+        snapshot_query = (
+            select(Palette_Snapshot, Palette, User.username)
+            .join(Palette, Palette.id == Palette_Snapshot.palette_id)
+            .join(User, User.id == Palette.user_id)
+            .where(Palette_Snapshot.branch_id.is_(None))
+            .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
+        )
+        if owner_user_ids is not None:
+            if not owner_user_ids:
+                return []
+            snapshot_query = snapshot_query.where(Palette.user_id.in_(owner_user_ids))
+
+        rows = session.exec(snapshot_query.limit(max(limit * 5, 80))).all()
+        seen_palette_ids: set[int] = set()
+        items: list[dict] = []
+
+        for snapshot, palette, owner_username in rows:
+            if palette.id in seen_palette_ids:
+                continue
+            seen_palette_ids.add(palette.id)
+            colors = PaletteService.get_snapshot_state(snapshot, session)
+            items.append(
+                {
+                    "id": palette.id,
+                    "owner_username": owner_username,
+                    "title": palette.title,
+                    "description": palette.description,
+                    "folder_path": PaletteService._get_folder_path(palette.folder_id, session),
+                    "created_at": palette.created_at,
+                    "latest_main_snapshot_created_at": snapshot.created_at,
+                    "palette_colors": [{"hex": c.hex, "label": c.label} for c in colors],
+                }
+            )
+            if len(items) >= limit:
+                break
+
+        return items
+
     # Reconstructs the active color list for a specific snapshot by resolving past changes.
     def get_snapshot_state(
         snapshot: Palette_Snapshot, session: SessionDep

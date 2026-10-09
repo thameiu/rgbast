@@ -1,7 +1,10 @@
 from fastapi import HTTPException, status
 
 from app.core.database import SessionDep
-from app.schemas.search import PaletteSearchResponse, UserSearchResponse
+from sqlmodel import select
+
+from app.models.colleague import Colleague
+from app.schemas.search import DiscoverPalettesResponse, PaletteSearchResponse, UserSearchResponse
 from app.services.palette import PaletteService
 from app.services.user import UserService
 
@@ -47,6 +50,42 @@ class SearchController:
             )
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e),
+            )
+
+    @staticmethod
+    def discover_recent_palettes_control(session: SessionDep, limit: int) -> DiscoverPalettesResponse:
+        try:
+            results = PaletteService.get_recent_palette_items(session=session, limit=limit)
+            return DiscoverPalettesResponse(total=len(results), results=results)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e),
+            )
+
+    @staticmethod
+    def discover_colleague_palettes_control(current_user_id: int, session: SessionDep, limit: int) -> DiscoverPalettesResponse:
+        try:
+            relations = session.exec(
+                select(Colleague).where(
+                    Colleague.status == "accepted",
+                    (Colleague.from_user_id == current_user_id) | (Colleague.to_user_id == current_user_id),
+                )
+            ).all()
+            colleague_ids = {
+                relation.to_user_id if relation.from_user_id == current_user_id else relation.from_user_id
+                for relation in relations
+            }
+            results = PaletteService.get_recent_palette_items(
+                session=session,
+                limit=limit,
+                owner_user_ids=colleague_ids,
+            )
+            return DiscoverPalettesResponse(total=len(results), results=results)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

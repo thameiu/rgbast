@@ -37,3 +37,8 @@ class PaletteSearchResponse(SQLModel):
     color_mode: str
     total: int
     results: list[PaletteSearchItem]
+
+
+class DiscoverPalettesResponse(SQLModel):
+    total: int
+    results: list[PaletteSearchItem]
