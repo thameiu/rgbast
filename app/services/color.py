@@ -1,3 +1,5 @@
+from app.services.bast import bast_index
+
 import colorsys
 from collections import Counter
 from io import BytesIO
@@ -513,63 +515,8 @@ class ColorService:
 
     @staticmethod
     def _bast_score(r: int, g: int, b: int) -> float:
-        """How 'bastard' (undescribable) a colour is, 0–100.
-
-        Three additive components, all derived from HSV:
-
-        • vivid-between  — saturated colour whose hue falls between the six
-          primary/secondary archetypes (red/yellow/green/cyan/blue/magenta).
-          Example: orange, chartreuse, violet. Dampened at extreme lightness
-          because "dark orange" and "bright orange" are still nameable.
-
-        • muddy  — medium saturation AND medium lightness: the zone that
-          produces browns, olives, mauves, khakis, dusty everythings.
-
-        • achromatic ambiguity  — near-grey at mid-lightness; pure black and
-          pure white score 0 because they have unambiguous names.
-
-        Calibration: the analytical maximum of the weighted sum (≈ 0.702) is
-        used as the normalisation divisor so the scale fills 0–100.
-        """
-        rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
-        h, s, v = colorsys.rgb_to_hsv(rf, gf, bf)
-        h_deg = h * 360.0
-
-        # Distance to nearest primary/secondary hue archetype, [0, 1]
-        # 0 = on an archetype, 1 = midpoint between two (e.g. h=30° for orange)
-        archetypes = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]
-        hue_dist = min(min(abs(h_deg - a), 360.0 - abs(h_deg - a)) for a in archetypes)
-        hue_between = min(hue_dist / 30.0, 1.0)
-
-        # Mid-zone functions (each peaks at 0.5, zero at the extremes)
-        val_mid  = 1.0 - abs(2.0 * v - 1.0)   # 1 at v=0.5, 0 at v=0 or v=1
-        sat_dome = 4.0 * s * (1.0 - s)         # 1 at s=0.5, 0 at s=0 or s=1
-
-        # Component 1: vivid colour with ambiguous hue, dampened at lightness extremes
-        vivid_between = s * hue_between * (1.0 - 0.5 * abs(2.0 * v - 1.0))
-
-        # Component 2: the muddy middle — medium sat + medium value
-        muddy = sat_dome * val_mid
-
-        # Component 3: achromatic ambiguity — near-grey at mid-lightness
-        achromatic = (1.0 - s) ** 2 * val_mid
-
-        # Extra penalty: far from all 8 pure-colour anchors (white, black, RGBYCM)
-        min_pure_dist = min(
-            math.sqrt((r - rp) ** 2 + (g - gp) ** 2 + (b - bp) ** 2)
-            for rp, gp, bp in ColorService._PURE_RGB
-        )
-        pure_dist_norm = min_pure_dist / 441.67  # max RGB Euclidean distance
-
-        raw = (
-            0.42 * vivid_between
-            + 0.33 * muddy
-            + 0.15 * pure_dist_norm
-            + 0.10 * achromatic
-        )
-
-        # Calibrated normalisation: max raw ≈ 0.6391 (numerically verified at rgb≈(48,88,128))
-        return max(0.0, min(100.0, raw / 0.6391 * 100.0))
+        """Bast index: 13-reference OKLab naming entropy, scaled to 0-100."""
+        return bast_index(r, g, b)
 
 
 # Hue offsets for each harmony mode (degrees).  The pool is cycled as needed.
