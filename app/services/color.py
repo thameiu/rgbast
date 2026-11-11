@@ -31,7 +31,6 @@ from app.schemas.color import (
     ColorLabelsResponse,
     ColorLAB,
     ColorLCH,
-    ColorRGBPercent,
     ColorLUV,
     ColorReferenceRow,
     ColorRelatedSet,
@@ -79,7 +78,6 @@ class ColorService:
         contrast = ColorService._contrast_info(r, g, b)
         cb = ColorService._color_blindness_previews(r, g, b)
         bast_score = ColorService._bast_score(r, g, b)
-        rgb_percent = ColorService._to_rgb_percent(r, g, b)
         shades = ColorService._build_shades(r, g, b)
         tints = ColorService._build_tints(r, g, b)
         complementary = ColorService._build_related_set(normalized_hex, hsl, [180.0])
@@ -102,10 +100,8 @@ class ColorService:
             closest_name=closest_name,
             label_is_approximate=label_is_approximate,
             rgb=ColorRGB(r=r, g=g, b=b),
-            rgb_percent=rgb_percent,
             hsl=hsl,
             cmyk=cmyk,
-            cmyk_percent=cmyk,
             hsb=hsb,
             lab=lab,
             xyz=xyz,
@@ -268,14 +264,6 @@ class ColorService:
             m=round(m * 100, 2),
             y=round(y * 100, 2),
             k=round(k * 100, 2),
-        )
-
-    @staticmethod
-    def _to_rgb_percent(r: int, g: int, b: int) -> ColorRGBPercent:
-        return ColorRGBPercent(
-            r=round((r / 255.0) * 100, 2),
-            g=round((g / 255.0) * 100, 2),
-            b=round((b / 255.0) * 100, 2),
         )
 
     @staticmethod
@@ -548,8 +536,7 @@ class PaletteGeneratorService:
         r, g, b = ColorService._hex_to_rgb(hex_str)
         return ColorService._bast_score(r, g, b)
 
-    # Absolute minimum RGB distance between any two colors in a palette.
-    # Prevents near-identical swatches even when candidates are scarce.
+    # Preferred minimum Lab distance; the picker relaxes it when necessary.
     _HARD_MIN_DIST = 25.0
 
     @staticmethod
@@ -564,13 +551,14 @@ class PaletteGeneratorService:
         deduped: dict[str, GeneratedColor] = {}
         for candidate in candidates:
             deduped.setdefault(candidate.hex, candidate)
-        available = list(deduped.values())
+        seed_hexes = {color.hex for color in seed_colors}
+        available = [color for color in deduped.values() if color.hex not in seed_hexes]
         picked: list[GeneratedColor] = list(seed_colors)
         result: list[GeneratedColor] = []
 
-        while len(result) < n:
+        while len(result) < n and available:
             chosen: GeneratedColor | None = None
-            for dist_threshold in (min_dist, max(hard, min_dist / 2), hard):
+            for dist_threshold in (min_dist, max(hard, min_dist / 2), hard, 18.0, 10.0, 0.0):
                 viable = [
                     cand
                     for cand in available
@@ -725,6 +713,20 @@ class PaletteGeneratorService:
                 all_candidates.append(_make(hue_deg, max(l_lo, min(l_hi, l_pct))))
 
             gen_colors = PaletteGeneratorService._pick_diverse(all_candidates, remaining, base_gen, min_dist)
+
+        # A narrow harmony can exhaust distinct candidates at high counts.
+        # Expand the pool only for missing slots, then relax spacing as needed.
+        if len(gen_colors) < remaining:
+            extra_candidates = [
+                _make(hue_pool[i % len(hue_pool)], l_lo + (i % 31) * (l_hi - l_lo) / 30)
+                for i in range(max(remaining * 20, 160))
+            ]
+            gen_colors.extend(PaletteGeneratorService._pick_diverse(
+                extra_candidates,
+                remaining - len(gen_colors),
+                base_gen + gen_colors,
+                min_dist,
+            ))
 
         # Sort dark→light at high contrast; otherwise keep most separated picks first.
         if c_norm > 0.6:

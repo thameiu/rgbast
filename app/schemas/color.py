@@ -10,12 +10,6 @@ class ColorRGB(SQLModel):
     b: int
 
 
-class ColorRGBPercent(SQLModel):
-    r: float
-    g: float
-    b: float
-
-
 class ColorHSL(SQLModel):
     h: float
     s: float
@@ -121,10 +115,8 @@ class ColorInfoResponse(SQLModel):
     normalized_hex: str
     closest_name: str | None
     rgb: ColorRGB
-    rgb_percent: ColorRGBPercent
     hsl: ColorHSL
     cmyk: ColorCMYK
-    cmyk_percent: ColorCMYK
     hsb: ColorHSB
     lab: ColorLAB
     xyz: ColorXYZ
