@@ -1,6 +1,7 @@
 from sqlalchemy import BigInteger, TIMESTAMP, text
 from sqlmodel import Field, SQLModel
 from datetime import datetime
+from secrets import token_hex
 
 
 class User(SQLModel, table=True):
@@ -9,6 +10,7 @@ class User(SQLModel, table=True):
     email: str = Field(default=None, index=True, unique=True, nullable=False)
     firstname: str | None = Field(default=None, nullable=True)
     lastname: str | None = Field(default=None, nullable=True)
+    profile_color: str = Field(default_factory=lambda: token_hex(3).upper(), max_length=6, nullable=False)
     password: str = Field(default=None)
     birthdate: datetime | None = Field(default=None, nullable=True)
     is_email_verified: bool = Field(default=False, nullable=False)

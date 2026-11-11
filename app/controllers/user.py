@@ -78,6 +78,7 @@ class UserController:
             if username_changed:
                 access_token = AuthService.create_access_token_for_user(user)
             return UserUpdateMeResponse(
+                profile_color=user.profile_color,
                 id=user.id,
                 username=user.username,
                 firstname=user.firstname,

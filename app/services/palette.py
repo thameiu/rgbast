@@ -1,7 +1,5 @@
 from datetime import timezone, datetime
-from collections import defaultdict
 from sqlmodel import delete, desc, select
-import difflib
 import re
 
 from app.core.database import SessionDep
@@ -17,6 +15,7 @@ from app.models.user import User
 from app.schemas.palette import PaletteCreate, PaletteSnapshotSave, PaletteUpdate
 from app.services.color import ColorService
 from app.utils.lexicographic_ranker import LexicographicRanker
+from app.utils.palette_diff import diff_colors
 
 try:
     import colornames as _cn
@@ -567,7 +566,7 @@ class PaletteService:
             select(Palette_Snapshot)
             .where(Palette_Snapshot.palette_id == palette_id)
             .where(Palette_Snapshot.branch_id.is_(None))
-            .order_by(desc(Palette_Snapshot.created_at))
+            .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
         ).all()
 
         branches = session.exec(
@@ -599,7 +598,7 @@ class PaletteService:
                                 Palette_Snapshot.palette_id == palette_id,
                                 Palette_Snapshot.branch_id == branch.id,
                             )
-                            .order_by(desc(Palette_Snapshot.created_at))
+                            .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
                         ).all()
                     ],
                 }
@@ -695,20 +694,9 @@ class PaletteService:
         branch_id: int | None,
         session: SessionDep,
     ) -> tuple[Palette_Snapshot, list[Palette_Change]]:
-        def _get_identity(c):
-            return f"{c.hex}_{c.label}"
-
-        old_ids = [_get_identity(c) for c in previous_colors]
-        new_ids = [_get_identity(c) for c in new_inputs]
-
-        matcher = difflib.SequenceMatcher(None, old_ids, new_ids)
-        opcodes = matcher.get_opcodes()
-
-        if (
-            len(opcodes) == 1
-            and opcodes[0][0] == "equal"
-            and opcodes[0][2] - opcodes[0][1] == len(previous_colors)
-        ):
+        diff = diff_colors(previous_colors, new_inputs)
+        if all(change.old_index is not None and change.new_index is not None
+               and not change.fields for change in diff):
             raise ValueError("No changes detected in palette colors.")
 
         new_snapshot = Palette_Snapshot(
@@ -720,105 +708,47 @@ class PaletteService:
         session.add(new_snapshot)
         session.flush()
 
-        new_colors_final = [None] * len(new_inputs)
+        # Keep unchanged rows as rank anchors. Only edited or moved colors need
+        # a new row; their previous id remains linked in Palette_Change.
+        final_colors = {
+            change.new_index: previous_colors[change.old_index]
+            for change in diff
+            if change.old_index is not None and change.new_index is not None
+            and not change.fields
+        }
         changes_to_record = []
-        replacements_map = {}
-        pending_deletions: list[Palette_Color] = []
-        pending_deletions_by_identity: dict[str, list[int]] = defaultdict(list)
-
-        for tag, i1, i2, j1, j2 in opcodes:
-            if tag == "equal":
-                for old_idx, new_idx in zip(range(i1, i2), range(j1, j2)):
-                    new_colors_final[new_idx] = previous_colors[old_idx]
-
-            elif tag == "delete":
-                for old_idx in range(i1, i2):
-                    pending_deletions.append(previous_colors[old_idx])
-
-            elif tag == "replace":
-                old_indices = list(range(i1, i2))
-                new_indices = list(range(j1, j2))
-
-                for k in range(max(len(old_indices), len(new_indices))):
-                    if k < len(old_indices) and k < len(new_indices):
-                        replacements_map[new_indices[k]] = previous_colors[
-                            old_indices[k]
-                        ].id
-
-                    elif k < len(old_indices):
-                        pending_deletions.append(previous_colors[old_indices[k]])
-
-        for old_color in pending_deletions:
-            pending_deletions_by_identity[_get_identity(old_color)].append(old_color.id)
-
-        for tag, i1, i2, j1, j2 in opcodes:
-            if tag == "insert" or tag == "replace":
-                for new_idx in range(j1, j2):
-                    req_color = new_inputs[new_idx]
-
-                    left_key = (
-                        new_colors_final[new_idx - 1].position_key
-                        if new_idx > 0 and new_colors_final[new_idx - 1]
-                        else None
-                    )
-                    right_key = None
-
-                    for scan_idx in range(new_idx + 1, len(new_inputs)):
-                        if new_colors_final[scan_idx]:
-                            right_key = new_colors_final[scan_idx].position_key
-                            break
-
-                    if left_key and not right_key:
-                        pos_key = LexicographicRanker.increment(left_key[-1])
-                        if len(left_key) > 1:
-                            pos_key = left_key[:-1] + pos_key
-                    elif not left_key and right_key:
-                        pos_key = LexicographicRanker.midpoint("`", right_key)
-                    else:
-                        pos_key = LexicographicRanker.midpoint(
-                            left_key or "`", right_key or "z"
-                        )
-
-                    new_c = Palette_Color(
-                        palette_snapshot_id=new_snapshot.id,
-                        hex=req_color.hex,
-                        label=req_color.label,
-                        position_key=pos_key,
-                    )
-                    session.add(new_c)
-                    session.flush()
-                    new_colors_final[new_idx] = new_c
-
-                    prev_color_id = replacements_map.get(new_idx, None)
-                    if prev_color_id is None:
-                        identity_key = _get_identity(req_color)
-                        if pending_deletions_by_identity[identity_key]:
-                            prev_color_id = pending_deletions_by_identity[
-                                identity_key
-                            ].pop(0)
-
-                    changes_to_record.append(
-                        Palette_Change(
-                            previous_snapshot_id=previous_snapshot.id,
-                            new_snapshot_id=new_snapshot.id,
-                            previous_color_id=prev_color_id,
-                            new_color_id=new_c.id,
-                        )
-                    )
-
-        for remaining_prev_ids in pending_deletions_by_identity.values():
-            for prev_id in remaining_prev_ids:
-                changes_to_record.append(
-                    Palette_Change(
-                        previous_snapshot_id=previous_snapshot.id,
-                        new_snapshot_id=new_snapshot.id,
-                        previous_color_id=prev_id,
-                        new_color_id=None,
-                    )
+        for change in diff:
+            previous_color = previous_colors[change.old_index] if change.old_index is not None else None
+            if change.new_index is None:
+                new_color = None
+            elif change.new_index in final_colors:
+                continue
+            else:
+                index = change.new_index
+                left = final_colors.get(index - 1)
+                right = next((final_colors[j] for j in range(index + 1, len(new_inputs))
+                              if j in final_colors), None)
+                color = new_inputs[index]
+                new_color = Palette_Color(
+                    palette_snapshot_id=new_snapshot.id,
+                    hex=color.hex.upper(),
+                    label=color.label or None,
+                    position_key=LexicographicRanker.midpoint(
+                        left.position_key if left else None,
+                        right.position_key if right else None,
+                    ),
                 )
-
-        for change in changes_to_record:
-            session.add(change)
+                session.add(new_color)
+                session.flush()
+                final_colors[index] = new_color
+            recorded = Palette_Change(
+                previous_snapshot_id=previous_snapshot.id,
+                new_snapshot_id=new_snapshot.id,
+                previous_color_id=previous_color.id if previous_color else None,
+                new_color_id=new_color.id if new_color else None,
+            )
+            session.add(recorded)
+            changes_to_record.append(recorded)
 
         return new_snapshot, changes_to_record
 

@@ -1,6 +1,7 @@
 from typing import Literal
 
 from sqlmodel import SQLModel
+from app.schemas.profile_color import ProfileColor
 
 
 ColleagueRelationStatus = Literal[
@@ -13,6 +14,7 @@ ColleagueRelationStatus = Literal[
 
 
 class ColleagueUserResponse(SQLModel):
+    profile_color: ProfileColor
     id: int
     username: str
     firstname: str | None

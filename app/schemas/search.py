@@ -1,8 +1,10 @@
 from datetime import datetime
 from sqlmodel import SQLModel
+from app.schemas.profile_color import ProfileColor
 
 
 class UserSearchItem(SQLModel):
+    profile_color: ProfileColor
     id: int
     username: str
     firstname: str | None

@@ -32,6 +32,7 @@ class UserService:
             return None
         colleagues_count = ColleagueService.count_colleagues(user.id, session)
         return UserGetResponse(
+            profile_color=user.profile_color,
             id=user.id,
             username=user.username,
             firstname=user.firstname,
@@ -73,6 +74,8 @@ class UserService:
             user.firstname = update_schema.firstname.strip() or None
         if update_schema.lastname is not None:
             user.lastname = update_schema.lastname.strip() or None
+        if update_schema.profile_color is not None:
+            user.profile_color = update_schema.profile_color
 
         session.add(user)
         session.commit()
@@ -163,6 +166,7 @@ class UserService:
                 "id": user.id,
                 "username": user.username,
                 "firstname": user.firstname,
+                "profile_color": user.profile_color,
                 "lastname": user.lastname,
             }
             for _, user in top

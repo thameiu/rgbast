@@ -22,6 +22,7 @@ class ColleagueService:
         return {
             "id": user.id,
             "username": user.username,
+            "profile_color": user.profile_color,
             "firstname": user.firstname,
             "lastname": user.lastname,
         }

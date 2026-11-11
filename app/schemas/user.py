@@ -3,6 +3,7 @@ from typing import Literal
 from sqlmodel import Field, SQLModel
 from pydantic import EmailStr, field_validator
 import re
+from app.schemas.profile_color import ProfileColor
 
 
 class UserUtils:
@@ -37,6 +38,7 @@ class UserCreate(SQLModel):
 
 
 class UserCreateResponse(SQLModel):
+    profile_color: ProfileColor
     response: str
     username: str
     email: EmailStr
@@ -47,6 +49,7 @@ class UserCreateResponse(SQLModel):
 
 
 class UserGetResponse(SQLModel):
+    profile_color: ProfileColor
     id: int
     username: str
     firstname: str | None
@@ -60,6 +63,7 @@ class UserMeResponse(UserGetResponse):
 
 
 class UserUpdateMe(SQLModel):
+    profile_color: ProfileColor | None = None
     username: str | None = Field(default=None, max_length=50)
     firstname: str | None = Field(default=None, max_length=50)
     lastname: str | None = Field(default=None, max_length=50)
@@ -76,6 +80,7 @@ class UserUpdateMe(SQLModel):
 
 
 class UserUpdateMeResponse(SQLModel):
+    profile_color: ProfileColor
     id: int
     username: str
     firstname: str | None
