@@ -1,3 +1,5 @@
+<p align="center"><img width="300" height="109" alt="rgbast" src="https://github.com/user-attachments/assets/a5e9dbf6-22d2-484d-b903-6389a29779f5" /></p>
+
 # RGBAST API
 
 Backend of [RGBAST](https://rgbast.com), a color palette editor that keeps the full history of every palette: each save is a snapshot, you can branch, merge and go back to any version.
