@@ -1,14 +1,11 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, TIMESTAMP, UniqueConstraint, text
+from sqlalchemy import BigInteger, TIMESTAMP, text
 from sqlmodel import Field, SQLModel
 
 
 class Color_Bookmark(SQLModel, table=True):
-    __table_args__ = (
-        UniqueConstraint("user_id", "hex", name="uq_color_bookmark_user_hex"),
-    )
-
+    project_id: int | None = Field(default=None, foreign_key="project.id", ondelete="CASCADE", sa_type=BigInteger, index=True)
     id: int = Field(primary_key=True, sa_type=BigInteger(), nullable=False)
     user_id: int = Field(
         index=True,

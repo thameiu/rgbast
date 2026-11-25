@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from app.core.database import SessionDep
-from app.middlewares.auth import verify_token
+from app.middlewares.auth import optional_user, verify_token
 from app.controllers.palette import PaletteController
 from app.schemas.palette import (
     PaletteBranchDeleteResponse,
@@ -18,7 +18,11 @@ from app.schemas.palette import (
 )
 from app.models.user import User
 
-router = APIRouter()
+def palette_viewer(session: SessionDep, user=Depends(optional_user)):
+    session.info["viewer_id"] = user.id if user else None
+
+
+router = APIRouter(dependencies=[Depends(palette_viewer)])
 
 
 @router.post("/palettes", response_model=PaletteCreateResponse, status_code=201)

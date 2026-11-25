@@ -5,7 +5,13 @@ from pydantic import field_validator
 import re
 
 
+class PaletteColorSave(SQLModel):
+    hex: str = Field(max_length=6)
+    label: str | None = Field(default=None, max_length=50)
+
+
 class PaletteCreate(SQLModel):
+    project_id: int | None = None
     title: str = Field(max_length=50)
     description: str = Field(max_length=500)
     folder_id: int | None = Field(default=None)
@@ -40,6 +46,7 @@ class PaletteCreate(SQLModel):
 
 
 class PaletteCreateResponse(SQLModel):
+    project_id: int | None = None
     id: int
     title: str
     description: str
@@ -67,11 +74,6 @@ class PaletteUpdate(SQLModel):
         if not re.match(pattern, title):
             raise ValueError("Title is invalid.")
         return title
-
-
-class PaletteColorSave(SQLModel):
-    hex: str = Field(max_length=6)
-    label: str | None = Field(max_length=50)
 
 
 class PaletteSnapshotSave(SQLModel):
@@ -105,6 +107,7 @@ class PaletteSnapshotSaveResponse(SQLModel):
 
 # A single commit in the tree
 class PaletteCommitResponse(SQLModel):
+    author: str | None = None
     id: int
     palette_id: int
     parent_snapshot_id: int | None
@@ -127,6 +130,7 @@ class PaletteBranchHistoryResponse(SQLModel):
 
 # The overall repository history
 class PaletteHistoryGraphResponse(SQLModel):
+    project: dict | None = None
     palette_id: int
     owner_username: str
     title: str

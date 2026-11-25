@@ -5,6 +5,11 @@ from app.services.auth import AuthService
 import jwt
 
 security = HTTPBearer()
+optional_security = HTTPBearer(auto_error=False)
+
+
+def optional_user(session: SessionDep, token_obj=Depends(optional_security)):
+    return verify_token(session, token_obj) if token_obj else None
 
 
 # Not really a middleware but useful for protecting certain routes only.

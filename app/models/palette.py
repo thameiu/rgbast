@@ -4,6 +4,7 @@ from datetime import datetime
 
 
 class Palette(SQLModel, table=True):
+    project_id: int | None = Field(default=None, foreign_key="project.id", sa_type=BigInteger, index=True)
     id: int = Field(primary_key=True, sa_type=BigInteger(), nullable=False)
     user_id: int = Field(
         index=True, default=None, foreign_key="user.id",
@@ -43,6 +44,7 @@ class Palette_Branch(SQLModel, table=True):
 
 
 class Palette_Snapshot(SQLModel, table=True):
+    author: str | None = Field(default=None, max_length=255, nullable=True)
     id: int = Field(primary_key=True, sa_type=BigInteger(), nullable=False)
     palette_id: int = Field(
         index=True, default=None, foreign_key="palette.id",

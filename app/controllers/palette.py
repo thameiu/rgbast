@@ -37,6 +37,9 @@ class PaletteController:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
             )
 
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -79,6 +82,9 @@ class PaletteController:
                 colors_deleted=deleted,
                 colors_modified=modified,
             )
+        except HTTPException:
+            session.rollback()
+            raise
         except PermissionError as e:
             session.rollback()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
@@ -92,6 +98,9 @@ class PaletteController:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
             )
 
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -117,6 +126,9 @@ class PaletteController:
 
         except HTTPException:
             raise
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -131,6 +143,9 @@ class PaletteController:
             return PaletteByUsernameResponse(**palettes_data)
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -150,6 +165,9 @@ class PaletteController:
             return PaletteHistoryGraphResponse(**history_data)
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -181,6 +199,9 @@ class PaletteController:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
             )
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -232,6 +253,9 @@ class PaletteController:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
             )
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -252,6 +276,9 @@ class PaletteController:
         except ValueError as e:
             session.rollback()
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -275,6 +302,9 @@ class PaletteController:
         except ValueError as e:
             session.rollback()
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -298,6 +328,9 @@ class PaletteController:
         except ValueError as e:
             session.rollback()
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(
@@ -322,6 +355,9 @@ class PaletteController:
         except ValueError as e:
             session.rollback()
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except HTTPException:
+            session.rollback()
+            raise
         except Exception as e:
             session.rollback()
             raise HTTPException(

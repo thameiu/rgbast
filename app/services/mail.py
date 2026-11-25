@@ -1,6 +1,8 @@
 import os
 import smtplib
 import ssl
+import logging
+from urllib.parse import quote
 from email.message import EmailMessage
 
 from dotenv import load_dotenv
@@ -38,12 +40,43 @@ class MailService:
 
         if use_ssl:
             context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=15) as server:
                 server.login(smtp_username, smtp_password)
                 server.send_message(message)
         else:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
                 server.starttls(context=ssl.create_default_context())
                 server.login(smtp_username, smtp_password)
                 server.send_message(message)
         return True
+
+    @staticmethod
+    def notify(to_email: str, subject: str, body: str, path: str) -> bool:
+        """Best-effort notifications, called only after the action commits."""
+        url = os.getenv("FRONTEND_URL", "https://rgbast.com").rstrip("/") + path
+        try:
+            return MailService.send_email(to_email, subject, f"{body}\n\n{url}")
+        except (OSError, smtplib.SMTPException, ValueError):
+            logging.getLogger("rgbast.mail").exception("Notification email failed")
+            return False
+
+    @staticmethod
+    def colleague_request(to_email: str, username: str) -> bool:
+        return MailService.notify(
+            to_email,
+            "RGBAST - New colleague request",
+            f"{username} has sent you a colleague request on RGBAST.\n"
+            "Sign in to view their profile and accept or decline the request.",
+            f"/users/{quote(username, safe='')}",
+        )
+
+    @staticmethod
+    def project_invitation(to_email: str, username: str, project_title: str) -> bool:
+        return MailService.notify(
+            to_email,
+            "RGBAST - Project invitation",
+            f'{username} has invited you to join the project "{project_title}" on RGBAST.\n'
+            "Sign in and open Projects in your Atelier to accept or decline the invitation.\n"
+            "You will receive access only after accepting the invitation.",
+            "/atelier/projects",
+        )

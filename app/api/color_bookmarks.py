@@ -1,60 +1,47 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.controllers.color_bookmark import ColorBookmarkController
 from app.core.database import SessionDep
-from app.middlewares.auth import verify_token
-from app.models.user import User
+from app.middlewares.auth import optional_user, verify_token
 from app.schemas.color_bookmark import (
-    ColorBookmarkByUsernameResponse,
-    ColorBookmarkDeleteResponse,
-    ColorBookmarkListResponse,
-    ColorBookmarkResponse,
-    ColorBookmarkUpsert,
+    ColorBookmarkByUsernameResponse, ColorBookmarkCreate, ColorBookmarkDeleteResponse,
+    ColorBookmarkListResponse, ColorBookmarkResponse, ColorBookmarkUpsert,
 )
+from app.services.color_bookmark import ColorBookmarkService
 
 router = APIRouter()
 
 
-@router.get("/color-bookmarks", response_model=ColorBookmarkListResponse, status_code=200)
-def list_my_color_bookmarks_handler(
-    session: SessionDep,
-    current_user: User = Depends(verify_token),
-):
-    return ColorBookmarkController.list_mine_control(current_user.id, session)
+@router.get('/color-bookmarks', response_model=ColorBookmarkListResponse)
+def list_bookmarks(session: SessionDep, hex: str | None = None, project_id: int | None = None,
+                   user=Depends(optional_user)):
+    if project_id is None and user is None:
+        raise HTTPException(401, 'Authentication required.')
+    return ColorBookmarkController.list_mine_control(user.id if user else None, session, hex, project_id)
 
 
-@router.get("/color-bookmarks/{hex_value}", response_model=ColorBookmarkResponse, status_code=200)
-def get_my_color_bookmark_handler(
-    hex_value: str,
-    session: SessionDep,
-    current_user: User = Depends(verify_token),
-):
-    return ColorBookmarkController.get_mine_by_hex_control(current_user.id, hex_value, session)
+@router.post('/color-bookmarks', response_model=ColorBookmarkResponse, status_code=201)
+def create_bookmark(payload: ColorBookmarkCreate, session: SessionDep, user=Depends(verify_token)):
+    return ColorBookmarkService.create(user.id, payload, session)
 
 
-@router.put("/color-bookmarks/{hex_value}", response_model=ColorBookmarkResponse, status_code=200)
-def upsert_color_bookmark_handler(
-    hex_value: str,
-    payload: ColorBookmarkUpsert,
-    session: SessionDep,
-    current_user: User = Depends(verify_token),
-):
-    return ColorBookmarkController.upsert_control(current_user.id, hex_value, payload, session)
+# Separate id paths prevent old clients from treating numeric hex codes as ids.
+@router.get('/color-bookmarks/by-id/{bookmark_id}', response_model=ColorBookmarkResponse)
+def get_bookmark(bookmark_id: int, session: SessionDep, user=Depends(verify_token)):
+    return ColorBookmarkService.get(bookmark_id, user.id, session)
 
 
-@router.delete("/color-bookmarks/{hex_value}", response_model=ColorBookmarkDeleteResponse, status_code=200)
-def delete_color_bookmark_handler(
-    hex_value: str,
-    session: SessionDep,
-    current_user: User = Depends(verify_token),
-):
-    return ColorBookmarkController.delete_control(current_user.id, hex_value, session)
+@router.patch('/color-bookmarks/by-id/{bookmark_id}', response_model=ColorBookmarkResponse)
+def update_bookmark(bookmark_id: int, payload: ColorBookmarkUpsert, session: SessionDep,
+                    user=Depends(verify_token)):
+    return ColorBookmarkService.update(user.id, bookmark_id, payload, session)
 
 
-@router.get(
-    "/users/{username}/color-bookmarks",
-    response_model=ColorBookmarkByUsernameResponse,
-    status_code=200,
-)
-def list_color_bookmarks_by_username_handler(username: str, session: SessionDep):
+@router.delete('/color-bookmarks/by-id/{bookmark_id}', response_model=ColorBookmarkDeleteResponse)
+def delete_bookmark(bookmark_id: int, session: SessionDep, user=Depends(verify_token)):
+    return ColorBookmarkService.delete(user.id, bookmark_id, session)
+
+
+@router.get('/users/{username}/color-bookmarks', response_model=ColorBookmarkByUsernameResponse)
+def public_bookmarks(username: str, session: SessionDep):
     return ColorBookmarkController.list_by_username_control(username, session)

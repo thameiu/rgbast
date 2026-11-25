@@ -23,7 +23,7 @@ class FolderService:
         folder = session.get(Folder, folder_id)
         if not folder:
             raise ValueError("Folder not found.")
-        if folder.user_id != user_id:
+        if folder.project_id is not None or folder.user_id != user_id:
             raise PermissionError("You do not have permission to modify this folder.")
         return folder
 
@@ -37,6 +37,7 @@ class FolderService:
     ) -> None:
         query = select(Folder).where(
             Folder.user_id == user_id,
+            Folder.project_id.is_(None),
             Folder.name == name,
         )
         if parent_folder_id is None:
@@ -63,7 +64,7 @@ class FolderService:
         parent = session.get(Folder, parent_folder_id)
         if not parent:
             raise ValueError("Parent folder not found.")
-        if parent.user_id != user_id:
+        if parent.project_id is not None or parent.user_id != user_id:
             raise PermissionError("You do not have permission to use this parent folder.")
 
         current = parent
@@ -84,7 +85,7 @@ class FolderService:
         user_id: int,
         session: SessionDep,
     ) -> tuple[list[int], dict[int, int]]:
-        folders = session.exec(select(Folder).where(Folder.user_id == user_id)).all()
+        folders = session.exec(select(Folder).where(Folder.user_id == user_id, Folder.project_id.is_(None))).all()
         children_by_parent: dict[int, list[int]] = {}
         for folder in folders:
             parent_id = folder.parent_folder_id
@@ -110,7 +111,7 @@ class FolderService:
         user = FolderService._get_user_by_username(username, session)
         return session.exec(
             select(Folder)
-            .where(Folder.user_id == user.id)
+            .where(Folder.user_id == user.id, Folder.project_id.is_(None))
             .order_by(Folder.parent_folder_id.is_(None).desc(), Folder.name)
         ).all()
 
@@ -128,7 +129,7 @@ class FolderService:
             parent = session.get(Folder, folder_schema.parent_folder_id)
             if not parent:
                 raise ValueError("Parent folder not found.")
-            if parent.user_id != user_id:
+            if parent.project_id is not None or parent.user_id != user_id:
                 raise PermissionError("You do not have permission to use this parent folder.")
 
         folder = Folder(

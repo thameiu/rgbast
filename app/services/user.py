@@ -9,7 +9,6 @@ from app.models.colleague import Colleague
 from app.schemas.user import UserCreate, UserGetResponse, UserUpdateMe
 from app.core.database import SessionDep
 from pwdlib import PasswordHash
-from app.services.palette import PaletteService
 from app.services.colleague import ColleagueService
 
 
@@ -88,13 +87,25 @@ class UserService:
         if not user:
             raise ValueError("User not found.")
 
+        from app.models.project import Project, ProjectAccess, ProjectInvitation
+        from app.models.color_bookmark import Color_Bookmark
+        from app.services.project_content import ProjectContentService
+        owned_projects = list(session.exec(select(Project.id).where(Project.creator_id == user_id)).all())
+        for project_id in owned_projects:
+            ProjectContentService.delete_contents(project_id, session)
+
         palette_ids = session.exec(
             select(Palette.id).where(Palette.user_id == user_id)
         ).all()
         for palette_id in palette_ids:
-            PaletteService.delete_palette(palette_id, user_id, session)
+            ProjectContentService.delete_palette_data(session.get(Palette, palette_id), session)
+        session.flush()
 
-        folder_ids = session.exec(select(Folder.id).where(Folder.user_id == user_id)).all()
+        # Shared project folders survive their original creator's account.
+        for folder in session.exec(select(Folder).where(Folder.user_id == user_id, Folder.project_id.is_not(None))).all():
+            folder.user_id = session.get(Project, folder.project_id).creator_id
+            session.add(folder)
+        folder_ids = session.exec(select(Folder.id).where(Folder.user_id == user_id, Folder.project_id.is_(None))).all()
         if folder_ids:
             session.exec(delete(Folder).where(Folder.id.in_(folder_ids)))
 
@@ -104,6 +115,14 @@ class UserService:
                 | (Colleague.to_user_id == user_id)
             )
         )
+
+        session.exec(delete(Color_Bookmark).where((Color_Bookmark.user_id == user_id) | Color_Bookmark.project_id.in_(owned_projects)))
+        owned = select(Project.id).where(Project.creator_id == user_id)
+        session.exec(delete(ProjectAccess).where((ProjectAccess.user_id == user_id) | ProjectAccess.project_id.in_(owned)))
+        session.exec(delete(ProjectInvitation).where(
+            (ProjectInvitation.user_id == user_id) | (ProjectInvitation.inviter_id == user_id)
+            | ProjectInvitation.project_id.in_(owned)))
+        session.exec(delete(Project).where(Project.creator_id == user_id))
 
         session.delete(user)
         session.commit()

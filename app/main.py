@@ -12,6 +12,7 @@ from fastapi.responses import PlainTextResponse, Response
 from sqlmodel import select
 
 from app.api import palettes, users, auth, color, folders, search, colleagues, color_bookmarks
+from app.api import projects
 from app.core.database import SessionDep
 from app.models.palette import Palette
 from app.models.user import User
@@ -52,6 +53,7 @@ app.include_router(color.router, tags=["color"])
 app.include_router(color_bookmarks.router, tags=["color-bookmarks"])
 app.include_router(search.router, tags=["search"])
 app.include_router(colleagues.router, tags=["colleagues"])
+app.include_router(projects.router, tags=["projects"])
 
 
 @app.middleware("http")
@@ -162,7 +164,7 @@ def _resolve_sitemap_rows(session: SessionDep) -> list[dict[str, str]]:
         )
 
     palettes_list = session.exec(
-        select(Palette).order_by(Palette.created_at.desc(), Palette.id.desc())
+        select(Palette).where(Palette.project_id.is_(None)).order_by(Palette.created_at.desc(), Palette.id.desc())
     ).all()
 
     users_by_id = {user.id: user for user in users_list}

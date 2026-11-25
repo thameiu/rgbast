@@ -5,6 +5,7 @@ from sqlmodel import Field, SQLModel, TIMESTAMP, text
 
 
 class Folder(SQLModel, table=True):
+    project_id: int | None = Field(default=None, foreign_key="project.id", sa_type=BigInteger, index=True)
     id: int = Field(primary_key=True, sa_type=BigInteger(), nullable=False)
     user_id: int = Field(
         index=True,

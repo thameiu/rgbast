@@ -7,6 +7,7 @@ from app.core.database import SessionDep
 from app.models.colleague import Colleague
 from app.models.user import User
 from app.schemas.colleague import ColleagueRelationStatus
+from app.services.mail import MailService
 
 
 class ColleagueService:
@@ -94,6 +95,8 @@ class ColleagueService:
         )
         session.add(created)
         session.commit()
+        sender = session.get(User, current_user_id)
+        MailService.colleague_request(target.email, sender.username)
         return "pending", ColleagueService._summarize_user(target), "Colleague request sent."
 
     @staticmethod

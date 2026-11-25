@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import field_validator
 from sqlmodel import Field, SQLModel
+from app.services.color import ColorService
 
 
 class ColorBookmarkUpsert(SQLModel):
@@ -17,6 +18,7 @@ class ColorBookmarkUpsert(SQLModel):
 
 
 class ColorBookmarkResponse(SQLModel):
+    project_id: int | None = None
     id: int
     user_id: int
     hex: str
@@ -35,5 +37,16 @@ class ColorBookmarkByUsernameResponse(SQLModel):
 
 
 class ColorBookmarkDeleteResponse(SQLModel):
+    id: int
     hex: str
     deleted: bool
+
+
+class ColorBookmarkCreate(ColorBookmarkUpsert):
+    hex: str
+    project_id: int | None = None
+
+    @field_validator("hex")
+    @classmethod
+    def validate_hex(cls, value: str) -> str:
+        return ColorService._normalize_hex(value)

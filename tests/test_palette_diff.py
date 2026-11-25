@@ -89,6 +89,21 @@ class PaletteDiffTests(unittest.TestCase):
             self.assertEqual((latest["colors_added"], latest["colors_deleted"], latest["colors_modified"]), (0, 0, 1))
             self.assertEqual(latest["palette_colors"], [{"hex": "BBBBBB", "label": "Menthe"}])
 
+            from fastapi import HTTPException
+            for parent_id, reason in [(snapshot.id, "branch_advanced"), (None, "missing_base"), (99999, "base_deleted")]:
+                with self.subTest(reason=reason), self.assertRaises(HTTPException) as conflict:
+                    PaletteController.save_palette_control(palette.id, PaletteSnapshotSave(
+                        parent_snapshot_id=parent_id,
+                        palette_colors=[PaletteColorSave(hex="CCCCCC", label="Local")],
+                    ), user.id, session)
+                self.assertEqual(conflict.exception.status_code, 409)
+                detail = conflict.exception.detail
+                self.assertEqual(detail["reason"], reason)
+                self.assertEqual(detail["latest"]["id"], result.palette_snapshot_id)
+                self.assertEqual(detail["mine"], [{"hex": "CCCCCC", "label": "Local"}])
+                current, _ = PaletteService.get_latest_palette_snapshot(palette.id, session)
+                self.assertEqual(current.id, result.palette_snapshot_id)
+
             # Repeated edits exercise persistence, duplicate occurrences, moves
             # and rank insertion, not just the pure diff's counters.
             rng = random.Random(24)

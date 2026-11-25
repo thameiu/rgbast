@@ -19,6 +19,7 @@ from app.models.palette import (  # noqa: F401
 from app.models.folder import Folder  # noqa: F401
 from app.models.colleague import Colleague  # noqa: F401
 from app.models.color_bookmark import Color_Bookmark  # noqa: F401
+from app.models.project import Project, ProjectAccess, ProjectInvitation  # noqa: F401
 from sqlmodel import SQLModel
 
 config = context.config

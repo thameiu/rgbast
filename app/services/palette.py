@@ -1,6 +1,8 @@
 from datetime import timezone, datetime
 from sqlmodel import delete, desc, select
 import re
+from fastapi import HTTPException
+from app.utils.palette_conflict import changed_colors
 
 from app.core.database import SessionDep
 from app.models.folder import Folder
@@ -12,6 +14,8 @@ from app.models.palette import (
     Palette_Snapshot,
 )
 from app.models.user import User
+from app.models.project import Project
+from app.services.project import ProjectService
 from app.schemas.palette import PaletteCreate, PaletteSnapshotSave, PaletteUpdate
 from app.services.color import ColorService
 from app.utils.lexicographic_ranker import LexicographicRanker
@@ -69,13 +73,15 @@ class PaletteService:
         return user
 
     @staticmethod
-    def _assert_folder_owner(folder_id: int | None, user_id: int, session: SessionDep) -> Folder | None:
+    def _assert_folder_owner(folder_id: int | None, user_id: int, session: SessionDep, project_id=None) -> Folder | None:
         if folder_id is None:
             return None
         folder = session.get(Folder, folder_id)
         if not folder:
             raise ValueError("Folder not found.")
-        if folder.user_id != user_id:
+        if folder.project_id != project_id:
+            raise ValueError("Folder belongs to another space.")
+        if project_id is None and folder.user_id != user_id:
             raise PermissionError("You do not have permission to use this folder.")
         return folder
 
@@ -99,11 +105,12 @@ class PaletteService:
         return names
 
     @staticmethod
-    def _resolve_folder_path(user_id: int, folder_names: list[str], session: SessionDep) -> int | None:
+    def _resolve_folder_path(user_id: int, folder_names: list[str], session: SessionDep, project_id=None) -> int | None:
         parent_id: int | None = None
         for name in folder_names:
             query = select(Folder).where(
-                Folder.user_id == user_id,
+                (Folder.user_id == user_id) if project_id is None else (Folder.project_id == project_id),
+                Folder.project_id.is_(None) if project_id is None else Folder.project_id == project_id,
                 Folder.name == name,
             )
             if parent_id is None:
@@ -117,8 +124,12 @@ class PaletteService:
         return parent_id
 
     @staticmethod
-    def _assert_path_length(username: str, folder_path: list[str], palette_title: str) -> None:
+    def _assert_path_length(username: str, folder_path: list[str], palette_title: str, project_id=None, session=None) -> None:
         full_path = "/users/" + "/".join([username] + folder_path + [palette_title])
+        if project_id is not None:
+            project = session.get(Project, project_id)
+            creator = session.get(User, project.creator_id)
+            full_path = "/projects/" + "/".join([creator.username, project.slug] + folder_path + [palette_title])
         if len(full_path) > 300:
             raise ValueError("Palette path is too long.")
 
@@ -129,9 +140,11 @@ class PaletteService:
         title: str,
         session: SessionDep,
         ignore_palette_id: int | None = None,
+        project_id: int | None = None,
     ) -> None:
         query = select(Palette).where(
-            Palette.user_id == user_id,
+            (Palette.user_id == user_id) if project_id is None else (Palette.project_id == project_id),
+            Palette.project_id.is_(None) if project_id is None else Palette.project_id == project_id,
             Palette.title == title,
         )
         if folder_id is None:
@@ -144,10 +157,12 @@ class PaletteService:
             raise ValueError("Palette name already exists in this folder.")
     @staticmethod
     def _assert_palette_owner(palette_id: int, user_id: int, session: SessionDep) -> Palette:
-        palette = PaletteService.get_palette(palette_id, session)
+        palette = PaletteService.get_palette(palette_id, session, user_id)
         if not palette:
             raise ValueError("Palette not found.")
-        if palette.user_id != user_id:
+        if palette.project_id is not None:
+            ProjectService.require(palette.project_id, user_id, session, "edit_palettes")
+        elif palette.user_id != user_id:
             raise PermissionError("You do not have permission to modify this palette.")
         return palette
 
@@ -184,6 +199,7 @@ class PaletteService:
             "parent_snapshot_id": snap.parent_snapshot_id,
             "branch_id": snap.branch_id,
             "comment": snap.comment,
+            "author": snap.author,
             "created_at": snap.created_at,
             "palette_colors": [{"hex": c.hex, "label": c.label} for c in colors],
             "colors_added": added,
@@ -193,23 +209,27 @@ class PaletteService:
 
     # Creates a new palette along with its initial snapshot and starting colors.
     def create_palette(paletteSchema: PaletteCreate, user_id: int, session: SessionDep):
+        project_id = paletteSchema.project_id
+        if project_id is not None:
+            ProjectService.require(project_id, user_id, session, "add_palettes", lock=True)
         folder_id = paletteSchema.folder_id
         if folder_id is None and paletteSchema.folder_path:
             folder_id = PaletteService._resolve_folder_path(
-                user_id, paletteSchema.folder_path, session
+                user_id, paletteSchema.folder_path, session, project_id
             )
 
         PaletteService._assert_palette_name(paletteSchema.title)
-        PaletteService._assert_folder_owner(folder_id, user_id, session)
+        PaletteService._assert_folder_owner(folder_id, user_id, session, project_id)
         PaletteService._ensure_palette_unique(
-            user_id, folder_id, paletteSchema.title, session
+            user_id, folder_id, paletteSchema.title, session, project_id=project_id
         )
 
         user = PaletteService._get_user(user_id, session)
         folder_path = PaletteService._get_folder_path(folder_id, session)
-        PaletteService._assert_path_length(user.username, folder_path, paletteSchema.title)
+        PaletteService._assert_path_length(user.username, folder_path, paletteSchema.title, project_id, session)
 
         new_palette = Palette(
+            project_id=project_id,
             user_id=user_id,
             title=paletteSchema.title,
             description=paletteSchema.description,
@@ -220,6 +240,7 @@ class PaletteService:
 
         new_snapshot = Palette_Snapshot(
             palette_id=new_palette.id,
+            author=PaletteService._get_user(user_id, session).username,
             branch_id=None,
             comment="Initial palette creation",
         )
@@ -241,9 +262,11 @@ class PaletteService:
         return new_palette
 
     # Retrieves a palette by its ID.
-    def get_palette(palette_id: int, session: SessionDep):
-        query = select(Palette).where(Palette.id == palette_id)
-        return session.exec(query).first()
+    def get_palette(palette_id: int, session: SessionDep, user_id=None):
+        palette = session.get(Palette, palette_id)
+        if palette and palette.project_id is not None:
+            ProjectService.require(palette.project_id, user_id if user_id is not None else session.info.get("viewer_id"), session)
+        return palette
 
     # Resolves a palette by username and folder path (e.g. "folder/sub/palette").
     def get_palette_by_path(username: str, path: str, session: SessionDep) -> Palette:
@@ -261,6 +284,7 @@ class PaletteService:
 
         query = select(Palette).where(
             Palette.user_id == user.id,
+            Palette.project_id.is_(None),
             Palette.title == palette_title,
         )
         if folder_id is None:
@@ -280,7 +304,7 @@ class PaletteService:
 
         palettes = session.exec(
             select(Palette)
-            .where(Palette.user_id == user.id)
+            .where(Palette.user_id == user.id, Palette.project_id.is_(None))
             .order_by(desc(Palette.created_at), desc(Palette.id))
         ).all()
 
@@ -327,6 +351,7 @@ class PaletteService:
         query = (
             select(Palette, User.username)
             .join(User, User.id == Palette.user_id)
+            .where(Palette.project_id.is_(None))
             .order_by(desc(Palette.created_at), desc(Palette.id))
         )
         if normalized_title:
@@ -419,7 +444,7 @@ class PaletteService:
             select(Palette_Snapshot, Palette, User.username)
             .join(Palette, Palette.id == Palette_Snapshot.palette_id)
             .join(User, User.id == Palette.user_id)
-            .where(Palette_Snapshot.branch_id.is_(None))
+            .where(Palette_Snapshot.branch_id.is_(None), Palette.project_id.is_(None))
             .order_by(desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id))
         )
         if owner_user_ids is not None:
@@ -522,7 +547,7 @@ class PaletteService:
                 query = query.where(Palette_Snapshot.branch_id == branch_id)
 
         query = query.order_by(
-            desc(Palette_Snapshot.created_at), desc(Palette_Snapshot.id)
+            desc(Palette_Snapshot.id)
         )
         latest_snapshot = session.exec(query).first()
 
@@ -579,6 +604,7 @@ class PaletteService:
 
         return {
             "palette_id": palette_id,
+            "project": ProjectService.serialize(session.get(Project, palette.project_id), session.info.get("viewer_id"), session) if palette.project_id is not None else None,
             "owner_username": owner_username,
             "title": palette.title,
             "description": palette.description,
@@ -623,19 +649,19 @@ class PaletteService:
         )
         next_folder_id = (
             updateSchema.folder_id
-            if updateSchema.folder_id is not None
+            if "folder_id" in updateSchema.model_fields_set
             else palette.folder_id
         )
 
         PaletteService._assert_palette_name(next_title)
-        PaletteService._assert_folder_owner(next_folder_id, user_id, session)
+        PaletteService._assert_folder_owner(next_folder_id, user_id, session, palette.project_id)
         PaletteService._ensure_palette_unique(
-            user_id, next_folder_id, next_title, session, ignore_palette_id=palette.id
+            user_id, next_folder_id, next_title, session, ignore_palette_id=palette.id, project_id=palette.project_id
         )
 
         user = PaletteService._get_user(user_id, session)
         folder_path = PaletteService._get_folder_path(next_folder_id, session)
-        PaletteService._assert_path_length(user.username, folder_path, next_title)
+        PaletteService._assert_path_length(user.username, folder_path, next_title, palette.project_id, session)
 
         palette.title = next_title
         palette.description = next_description
@@ -693,6 +719,7 @@ class PaletteService:
         comment: str,
         branch_id: int | None,
         session: SessionDep,
+        author: str | None = None,
     ) -> tuple[Palette_Snapshot, list[Palette_Change]]:
         diff = diff_colors(previous_colors, new_inputs)
         if all(change.old_index is not None and change.new_index is not None
@@ -702,6 +729,7 @@ class PaletteService:
         new_snapshot = Palette_Snapshot(
             palette_id=palette_id,
             parent_snapshot_id=previous_snapshot.id,
+            author=author,
             branch_id=branch_id,
             comment=comment,
         )
@@ -759,14 +787,42 @@ class PaletteService:
         user_id: int,
         session: SessionDep,
     ):
-        palette = PaletteService.get_palette(palette_id, session)
+        palette = session.exec(select(Palette).where(Palette.id == palette_id).with_for_update()).first()
         if not palette:
             raise ValueError("Palette not found.")
-        if palette.user_id != user_id:
+        if palette.project_id is not None:
+            ProjectService.require(palette.project_id, user_id, session, "edit_palettes")
+        elif palette.user_id != user_id:
             raise PermissionError("You do not have permission to modify this palette.")
 
         if saveSchema.create_branch and saveSchema.branch_id is not None:
             raise ValueError("Do not pass branch_id when create_branch=true.")
+
+        def conflict(reason):
+            latest, latest_colors = PaletteService.get_latest_palette_snapshot(
+                palette_id, session, branch_id=saveSchema.branch_id)
+            if latest is None:
+                latest, latest_colors = PaletteService.get_latest_palette_snapshot(palette_id, session)
+            base = session.get(Palette_Snapshot, saveSchema.parent_snapshot_id) if saveSchema.parent_snapshot_id else None
+            if base and base.palette_id != palette_id:
+                base = None
+            base_colors = PaletteService.get_snapshot_state(base, session) if base else []
+            def state(snapshot, colors):
+                if not snapshot:
+                    return None
+                return {"id": snapshot.id, "branch_id": snapshot.branch_id,
+                        "created_at": snapshot.created_at.isoformat(), "comment": snapshot.comment,
+                        "palette_colors": [{"hex": c.hex, "label": c.label or None} for c in colors]}
+            raise HTTPException(409, detail={
+                "code": "palette_conflict", "reason": reason,
+                "base": state(base, base_colors), "latest": state(latest, latest_colors),
+                "mine": [{"hex": c.hex, "label": c.label or None} for c in saveSchema.palette_colors],
+                "mine_changes": changed_colors(base_colors, saveSchema.palette_colors) if base else None,
+                "latest_changes": changed_colors(base_colors, latest_colors) if base else None,
+            })
+
+        if saveSchema.parent_snapshot_id is None:
+            conflict("missing_base")
 
         target_branch_id = saveSchema.branch_id
         if target_branch_id is not None:
@@ -774,9 +830,9 @@ class PaletteService:
                 palette_id, target_branch_id, session
             )
             if not branch:
-                raise ValueError("Branch not found for this palette.")
+                conflict("branch_deleted")
             if branch.merged_at:
-                raise ValueError("This branch has already been merged.")
+                conflict("branch_merged")
 
         latest_target_snapshot, _ = PaletteService.get_latest_palette_snapshot(
             palette_id, session, branch_id=target_branch_id
@@ -790,7 +846,7 @@ class PaletteService:
                 )
             ).first()
             if not prev_snapshot:
-                raise ValueError("Parent snapshot not found for this palette.")
+                conflict("base_deleted")
         else:
             if saveSchema.create_branch:
                 # Always branch from the latest main snapshot when no explicit parent is given.
@@ -825,9 +881,7 @@ class PaletteService:
                 and prev_snapshot.id != latest_target_snapshot.id
                 and saveSchema.parent_snapshot_id is not None
             ):
-                raise ValueError(
-                    "Parent snapshot is not the latest in this branch. Set create_branch=true to create a branch from this older snapshot."
-                )
+                conflict("branch_advanced")
 
         prev_colors = PaletteService.get_snapshot_state(prev_snapshot, session)
         comment = (saveSchema.comment or "").strip()
@@ -847,6 +901,7 @@ class PaletteService:
             comment=comment,
             branch_id=target_branch_id,
             session=session,
+            author=PaletteService._get_user(user_id, session).username,
         )
 
         session.commit()
@@ -860,10 +915,12 @@ class PaletteService:
         user_id: int,
         session: SessionDep,
     ) -> tuple[Palette_Branch, Palette_Snapshot, list[Palette_Change]]:
-        palette = PaletteService.get_palette(palette_id, session)
+        palette = PaletteService.get_palette(palette_id, session, user_id)
         if not palette:
             raise ValueError("Palette not found.")
-        if palette.user_id != user_id:
+        if palette.project_id is not None:
+            ProjectService.require(palette.project_id, user_id, session, "edit_palettes")
+        elif palette.user_id != user_id:
             raise PermissionError("You do not have permission to modify this palette.")
 
         branch = PaletteService.get_palette_branch(palette_id, branch_id, session)
@@ -892,6 +949,7 @@ class PaletteService:
             comment=f"Merge branch '{branch.title}'",
             branch_id=None,
             session=session,
+            author=PaletteService._get_user(user_id, session).username,
         )
 
         branch.merged_at = datetime.now(timezone.utc)
@@ -907,7 +965,9 @@ class PaletteService:
         user_id: int,
         session: SessionDep,
     ):
-        palette = PaletteService._assert_palette_owner(palette_id, user_id, session)
+        palette = PaletteService.get_palette(palette_id, session, user_id)
+        if not palette or palette.user_id != user_id:
+            raise PermissionError("Only the palette creator can delete this palette.")
 
         branch_ids = session.exec(
             select(Palette_Branch.id).where(Palette_Branch.palette_id == palette_id)
